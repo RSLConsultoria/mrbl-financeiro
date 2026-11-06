@@ -1390,7 +1390,9 @@ jobs:
       - name: Atualiza o Web App (mesma URL)
         run: npx clasp deploy -i "${{ vars.APPS_SCRIPT_DEPLOYMENT_ID }}" -d "${{ github.sha }}"
   front:
+    # Publica as telas assim que existir a URL do Web App, mesmo antes do envio automático do servidor estar configurado.
     needs: servidor
+    if: ${{ always() && vars.VITE_API_URL != '' && needs.servidor.result != 'failure' }}
     runs-on: ubuntu-latest
     environment: { name: github-pages, url: '${{ steps.deploy.outputs.page_url }}' }
     steps:
