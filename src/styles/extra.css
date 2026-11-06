@@ -1,1 +1,3 @@
 /* Ajustes próprios do app, por cima do CSS gerado do protótipo. */
+/* Indicador discreto de gravação pendente na planilha. */
+body.salvando .userbox::after { content: 'salvando…'; display: block; font-size: 11px; color: var(--muted, #888); margin-top: 2px; }
