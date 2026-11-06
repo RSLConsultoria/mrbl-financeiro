@@ -11,7 +11,7 @@
    - `carga.importar`: só administrador e só com a planilha vazia.
    - Esquema: `Contas` ganhou `hist`, `histEnt`, `log` e `extra` (JSON); `Despesas` e `Entradas` ganharam `extra`; saíram `ContasHist`, `PrevRevisao` e `Listas` (a revisão de previsões fica em `Config.prevRevisao`).
 2. **Telas** (`src/app/telas.js`): o código do protótipo v57, com o estado vindo do servidor. `save()` virou `sync.salvar()` (`src/app/sync.js`), que compara com a última gravação e manda só a diferença, em fila. Desfazer volta a tela e grava a volta. Ids aleatórios para duas pessoas não colidirem.
-3. **Carga inicial** (`src/app/carga.js`): painel que aparece para o administrador enquanto a planilha está vazia; lê `carga-inicial.json` e chama `carga.importar`. O arquivo é gerado do protótipo privado e nunca entra neste repositório.
+3. **Carga inicial** (`src/app/carga.js`, `src/app/planilhas.js`): painel que aparece para o administrador enquanto a planilha está vazia. Lê direto a planilha da DRE e o relatório semanal (.xlsx), liga os pagos do relatório às despesas da DRE (mesmo valor, até 20 dias) e monta as contas com a regra do protótipo. Um .json opcional traz o que essas planilhas não têm: histórico jan–jun da DRE, saldos e previsões. Feita em 06/11/2026 com DRE V2_17 + relatório 16 (2.116 contas, 1.655 despesas, 176 entradas). Os dados nunca entram neste repositório.
 
 **Como foi testado**
 
