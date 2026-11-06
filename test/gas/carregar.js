@@ -4,11 +4,11 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { criarFakes } from './fakes.js';
 
-export const ORDEM = ['Schema.js', 'Db.js', 'Logs.js', 'Auth.js', 'Main.js', 'Escrita.js'];
+export const ORDEM = ['Schema.js', 'Db.js', 'Logs.js', 'Auth.js', 'Main.js', 'Escrita.js', 'Sync.js', 'Carga.js'];
 
 export function carregarServidor(opts) {
   const fakes = criarFakes(opts);
-  const ctx = vm.createContext({ ...fakes, console, JSON, Math, Object, Array, String, Number, Error });
+  const ctx = vm.createContext({ ...fakes, console, JSON, Math, Object, Array, String, Number, Error, parseInt, Logger: { log() {} } });
   for (const f of ORDEM) {
     const arq = path.join(process.cwd(), 'apps-script', f);
     if (fs.existsSync(arq)) vm.runInContext(fs.readFileSync(arq, 'utf8'), ctx, { filename: f });

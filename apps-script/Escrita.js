@@ -11,7 +11,8 @@ function mutar_(sess, tela, fn) {
     var desfazer = null;
     if (diario.length) {
       desfazer = Utilities.getUuid();
-      CacheService.getScriptCache().put('desfazer:' + desfazer, JSON.stringify({ usuario: sess.usuario, msg: r.msg, diario: diario }), 600);
+      try { CacheService.getScriptCache().put('desfazer:' + desfazer, JSON.stringify({ usuario: sess.usuario, msg: r.msg, diario: diario }), 600); }
+      catch (e) { desfazer = null; } // mudança grande demais para guardar o Desfazer no cache
     }
     r.desfazer = desfazer;
     return r;

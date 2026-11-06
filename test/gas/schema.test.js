@@ -18,9 +18,24 @@ describe('setupPlanilha', () => {
     expect(g.ss.getSheetByName('Contas').rows.length).toBe(1);
     expect(g.Db.todos('Config')).toEqual([{ chave: 'prazoOficinas', valor: 15 }]);
   });
-  it('recusa aba com cabeçalho diferente', () => {
+  it('troca o cabeçalho de aba vazia e recusa aba com dados e cabeçalho diferente', () => {
     const g = carregarServidor();
+    g.ss.getSheetByName('Clientes').rows[0] = ['outra coisa', 'x'];
+    g.setupPlanilha();
+    expect(g.ss.getSheetByName('Clientes').rows[0].filter(Boolean)).toEqual(['nome']);
     g.ss.getSheetByName('Clientes').rows[0] = ['outra coisa'];
+    g.ss.getSheetByName('Clientes').rows.push(['ACME']);
     expect(() => g.setupPlanilha()).toThrow(/Cabeçalho diferente na aba Clientes/);
+  });
+  it('apaga abas antigas vazias e mantém as que têm dados', () => {
+    const g = carregarServidor();
+    g.ss.insertSheet('ContasHist').appendRow(['id']);
+    const l = g.ss.insertSheet('Listas'); l.appendRow(['tipo']); l.appendRow(['x']);
+    g.setupPlanilha();
+    const nomes = g.ss.getSheets().map((s) => s.getName());
+    expect(nomes).not.toContain('ContasHist');
+    expect(nomes).not.toContain('Página1');
+    expect(nomes).toContain('Listas');
+    expect(nomes.at(-1)).toBe('Logs');
   });
 });

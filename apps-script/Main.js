@@ -30,22 +30,4 @@ acao_('auth.criarSenha', function (d) { return Auth.criarSenha(d); }, true);
 
 // ---- ações com sessão ----
 acao_('auth.sair', function (d, s) { Auth.sair(s.token); return true; });
-
-acao_('dados.carregar', function (d, s) {
-  return {
-    usuario: s.usuario,
-    hoje: hoje_(),
-    contas: Db.todos('Contas'),
-    contasHist: Db.todos('ContasHist'),
-    despesas: Db.todos('Despesas'),
-    entradas: Db.todos('Entradas'),
-    dreHistorico: Db.todos('DreHistorico'),
-    previsoes: Db.todos('Previsoes'),
-    prevRevisao: Db.todos('PrevRevisao'),
-    fornecedores: Db.todos('Fornecedores'),
-    listas: Db.todos('Listas'),
-    clientes: Db.todos('Clientes'),
-    config: Db.todos('Config'),
-    usuarios: Auth.usuarios()
-  };
-});
+// dados.carregar e as demais ações das telas ficam em Sync.js.

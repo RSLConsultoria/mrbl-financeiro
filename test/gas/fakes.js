@@ -21,24 +21,28 @@ class FakeRange {
   }
   setNumberFormat(f) { this.sheet.formats.push([this.r, this.c, this.nr, this.nc, f]); return this; }
   setFontWeight() { return this; }
+  clearContent() { for (let i = 0; i < this.nr; i++) { const row = this.sheet.rows[this.r - 1 + i]; if (row) for (let j = 0; j < this.nc; j++) row[this.c - 1 + j] = ''; } return this; }
 }
 
 class FakeSheet {
   constructor(name) { this.name = name; this.rows = []; this.formats = []; this.frozen = 0; }
   getName() { return this.name; }
-  getLastRow() { return this.rows.length; }
+  getLastRow() { let n = this.rows.length; while (n && (this.rows[n - 1] || []).every((x) => x === '' || x == null)) n--; return n; }
   getLastColumn() { return Math.max(0, ...this.rows.map((r) => r.length)); }
   getRange(r, c, nr = 1, nc = 1) { return new FakeRange(this, r, c, nr, nc); }
   appendRow(row) { this.rows.push(row.slice()); return this; }
   deleteRow(r) { this.rows.splice(r - 1, 1); return this; }
+  deleteRows(r, n) { this.rows.splice(r - 1, n); return this; }
   setFrozenRows(n) { this.frozen = n; return this; }
-  getMaxRows() { return Math.max(1000, this.rows.length); }
+  getMaxRows() { return Math.max(this.maxRows || 1000, this.rows.length); }
+  insertRowsAfter(r, n) { this.maxRows = this.getMaxRows() + n; return this; }
 }
 
 class FakeSpreadsheet {
   constructor() { this.sheets = [new FakeSheet('Página1')]; this.active = null; }
   getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
   getSheets() { return this.sheets.slice(); }
+  deleteSheet(s) { this.sheets.splice(this.sheets.indexOf(s), 1); }
   insertSheet(n) { const s = new FakeSheet(n); this.sheets.push(s); return s; }
   setActiveSheet(s) { this.active = s; return s; }
   moveActiveSheet(pos) { const i = this.sheets.indexOf(this.active); this.sheets.splice(i, 1); this.sheets.splice(pos - 1, 0, this.active); }

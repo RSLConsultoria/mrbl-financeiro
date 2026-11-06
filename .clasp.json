@@ -7,6 +7,8 @@
     "apps-script/Logs.js",
     "apps-script/Auth.js",
     "apps-script/Main.js",
-    "apps-script/Escrita.js"
+    "apps-script/Escrita.js",
+    "apps-script/Sync.js",
+    "apps-script/Carga.js"
   ]
 }
