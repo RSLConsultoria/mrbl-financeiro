@@ -34,12 +34,9 @@ Limites conhecidos do Apps Script (adequados para 3 usuários): cada chamada lev
 
 ### Hospedagem do front
 
-GitHub Pages só publica repositório **privado** em planos pagos (Pro/Team). Como é sistema financeiro, o repositório deve ser privado:
+**Decisão (06/11/2026):** repositório **público** `RSLConsultoria/mrbl-financeiro`, com o front no **GitHub Pages** (de graça). O GitHub Pages não publica repositório privado na conta gratuita.
 
-- organização `RSLConsultoria` com plano pago → **GitHub Pages**, que é o caminho do plano 01;
-- plano Free → **Cloudflare Pages** ligado ao repositório privado (grátis, mesmo build `npm run build`, pasta `dist`). Só muda a tarefa de deploy.
-
-Nenhum dado fica no front: mesmo que o código vazasse, os dados continuam protegidos pelo login.
+Por isso o repositório nunca guarda dado da MRBL: a cópia do protótipo em `reference/mock.html` está sem os dados reais (o protótipo completo fica só no artefato privado), não há senha, chave nem planilha exportada, e os dados vivem só no Google Sheets, atrás do login. O que fica visível é o código e as regras de negócio.
 
 ---
 
