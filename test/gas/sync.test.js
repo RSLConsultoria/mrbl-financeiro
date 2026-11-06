@@ -92,3 +92,13 @@ describe('carga inicial', () => {
     expect(d.logs.some((l) => l.txt.startsWith('Carga inicial'))).toBe(true);
   });
 });
+
+describe('carga pelo app', () => {
+  it('só administrador e só com a planilha vazia', () => {
+    const { g, viv, luc } = logado();
+    const carga = { contas: [conta('c1')], saidas: [], entradas: [] };
+    expect(chamar(g, 'carga.importar', { carga }, viv).codigo).toBe('sem_permissao');
+    expect(chamar(g, 'carga.importar', { carga }, luc).dados).toMatchObject({ Contas: 1 });
+    expect(chamar(g, 'carga.importar', { carga }, luc).codigo).toBe('planilha_com_dados');
+  });
+});

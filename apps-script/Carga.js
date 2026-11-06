@@ -29,3 +29,16 @@ function rodarCarga() {
   try { Logger.log(JSON.stringify(Carga.importar(CARGA, 'Claude (carga)'))); }
   finally { trava.releaseLock(); }
 }
+
+// Importação pelo app: só administrador, e só com a planilha vazia (a não ser que confirme substituir).
+acao_('carga.importar', function (d, s) {
+  Usuarios.exigirAdmin_(s);
+  var c = d.carga || {};
+  if (!c.contas && !c.saidas && !c.entradas) throw Auth.erro('carga_vazia', 'O arquivo não tem contas, despesas nem entradas.');
+  var temDados = ['Contas', 'Despesas', 'Entradas'].some(function (a) { return SpreadsheetApp.getActive().getSheetByName(a).getLastRow() > 1; });
+  if (temDados && !d.substituir) throw Auth.erro('planilha_com_dados', 'A planilha já tem dados. A carga inicial só entra com ela vazia.');
+  var trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  try { return Carga.importar(c, s.usuario); }
+  finally { trava.releaseLock(); }
+});

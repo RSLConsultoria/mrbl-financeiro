@@ -4,6 +4,7 @@ import { criarApi } from './api/client.js';
 import { montarLogin } from './ui/login.js';
 import { iniciarTelas } from './app/telas.js';
 import { criarSincronizador } from './app/sync.js';
+import { precisaCarga, montarCarga } from './app/carga.js';
 
 const URL_API = import.meta.env.VITE_API_URL;
 const app = document.getElementById('app');
@@ -39,6 +40,11 @@ async function iniciar() {
       },
     });
     iniciado = true;
+    if (precisaCarga(dados)) {
+      const host = document.createElement('div');
+      app.parentNode.insertBefore(host, app);
+      montarCarga(host, { api, aoConcluir: () => location.reload() });
+    }
     iniciarTelas({ dados, api, sync, aoSair: async () => { await sync.esperar(); await api.sair(); location.reload(); } });
   } catch (err) {
     if (err.codigo !== 'sessao_expirada') app.innerHTML = '<p class="lg-err" style="padding:40px">' + err.message + '</p>';
