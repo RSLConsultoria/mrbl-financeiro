@@ -1374,6 +1374,8 @@ permissions:
 concurrency: { group: publicar, cancel-in-progress: false }
 jobs:
   servidor:
+    # Só roda depois da configuração única (plano 01, tarefa 7). Antes disso o job fica como "pulado", não como erro.
+    if: ${{ vars.APPS_SCRIPT_DEPLOYMENT_ID != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1471,7 +1473,7 @@ git remote add origin git@github.com:RSLConsultoria/mrbl-financeiro.git
 git push -u origin main
 ```
 
-Expected: o workflow **Testes** fica verde. O workflow **Publicar** falha no passo "Envia o código do Apps Script" até a Task 7 ser feita — é esperado.
+Expected: o workflow **Testes** fica verde. O workflow **Publicar** aparece com os jobs pulados até a Task 7 criar a variável `APPS_SCRIPT_DEPLOYMENT_ID`.
 
 ---
 
