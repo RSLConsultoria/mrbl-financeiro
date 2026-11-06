@@ -1,0 +1,12 @@
+{
+  "scriptId": "COLE_AQUI_O_ID_DO_SCRIPT",
+  "rootDir": "apps-script",
+  "filePushOrder": [
+    "apps-script/Schema.js",
+    "apps-script/Db.js",
+    "apps-script/Logs.js",
+    "apps-script/Auth.js",
+    "apps-script/Main.js",
+    "apps-script/Escrita.js"
+  ]
+}
