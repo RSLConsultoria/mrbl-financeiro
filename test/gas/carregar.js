@@ -4,7 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { criarFakes } from './fakes.js';
 
-export const ORDEM = ['Schema.js', 'Db.js', 'Logs.js', 'Auth.js', 'Main.js', 'Escrita.js', 'Sync.js', 'Carga.js', 'Deploy.js'];
+export const ORDEM = ['Schema.js', 'Db.js', 'Logs.js', 'Auth.js', 'Main.js', 'Escrita.js', 'Sync.js', 'Carga.js', 'Deploy.js', 'DePara.js'];
 
 export function carregarServidor(opts) {
   const fakes = criarFakes(opts);

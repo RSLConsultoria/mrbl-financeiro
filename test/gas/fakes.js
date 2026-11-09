@@ -21,6 +21,8 @@ class FakeRange {
   }
   setNumberFormat(f) { this.sheet.formats.push([this.r, this.c, this.nr, this.nc, f]); return this; }
   setFontWeight() { return this; }
+  setBackground() { return this; }
+  setFontColor() { return this; }
   clearContent() { for (let i = 0; i < this.nr; i++) { const row = this.sheet.rows[this.r - 1 + i]; if (row) for (let j = 0; j < this.nc; j++) row[this.c - 1 + j] = ''; } return this; }
 }
 
@@ -34,6 +36,8 @@ class FakeSheet {
   deleteRow(r) { this.rows.splice(r - 1, 1); return this; }
   deleteRows(r, n) { this.rows.splice(r - 1, n); return this; }
   setFrozenRows(n) { this.frozen = n; return this; }
+  setName(n) { this.name = n; return this; }
+  clear() { this.rows = []; return this; }
   getMaxRows() { return Math.max(this.maxRows || 1000, this.rows.length); }
   insertRowsAfter(r, n) { this.maxRows = this.getMaxRows() + n; return this; }
 }
@@ -42,6 +46,8 @@ class FakeSpreadsheet {
   constructor() { this.sheets = [new FakeSheet('Página1')]; this.active = null; }
   getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; }
   getSheets() { return this.sheets.slice(); }
+  getId() { return this.id; }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/' + this.id; }
   deleteSheet(s) { this.sheets.splice(this.sheets.indexOf(s), 1); }
   insertSheet(n) { const s = new FakeSheet(n); this.sheets.push(s); return s; }
   setActiveSheet(s) { this.active = s; return s; }
@@ -57,7 +63,12 @@ export function criarFakes({ agora = () => Date.now() } = {}) {
     ss,
     cache,
     Date: class extends Date { constructor(...a) { super(...(a.length ? a : [agora()])); } static now() { return agora(); } },
-    SpreadsheetApp: { getActive: () => ss },
+    SpreadsheetApp: {
+      getActive: () => ss,
+      criadas: [],
+      create(nome) { const n = new FakeSpreadsheet(); n.nome = nome; n.id = 'ss' + this.criadas.length; this.criadas.push(n); return n; },
+      openById(id) { const n = this.criadas.find((x) => x.id === id); if (!n) throw new Error('não existe'); return n; },
+    },
     CacheService: { getScriptCache: () => ({
       get: (k) => (cache.has(k) ? cache.get(k) : null),
       put: (k, v) => { cache.set(k, String(v)); },
@@ -65,7 +76,7 @@ export function criarFakes({ agora = () => Date.now() } = {}) {
     }) },
     LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
     props,
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (props.has(k) ? props.get(k) : null) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (props.has(k) ? props.get(k) : null), setProperty: (k, v) => props.set(k, v) }) },
     // UrlFetchApp e ScriptApp: os testes trocam fetches.responder para simular GitHub e Apps Script API.
     fetches,
     UrlFetchApp: { fetch(url, o) { const f = fetches; f.feitos.push({ url, o: o || {} }); const r = f.responder(url, o || {}); return { getResponseCode: () => r.code, getContentText: () => r.body }; } },
