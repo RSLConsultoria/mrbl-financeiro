@@ -29,3 +29,16 @@ describe('parcelamentos e cheques', () => {
     expect(d.contas[0]).toMatchObject({ parcId: 'pc1', parcN: 20 });
   });
 });
+
+describe('apagarDados', () => {
+  it('esvazia as abas de dados e mantém usuários e configurações', () => {
+    const { g, token } = entrar();
+    chamar(g, 'sync.aplicar', { mud: { Contas: { up: [{ id: 'c1', data: '2026-12-10', forn: 'X', valor: 1, hist: [] }], del: [] }, Cheques: { up: [{ id: 'q1', data: '2026-01-01', desc: 'A', valor: 1 }], del: [] } }, msg: 't' }, token);
+    g.apagarDados();
+    expect(g.Db.todos('Contas')).toEqual([]);
+    expect(g.Db.todos('Cheques')).toEqual([]);
+    expect(g.Db.todos('Logs')).toEqual([]);
+    expect(g.Db.todos('Usuarios').length).toBe(1);
+    expect(g.Db.pegar('Config', 'prazoOficinas')).toBeTruthy();
+  });
+});

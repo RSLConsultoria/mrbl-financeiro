@@ -42,3 +42,18 @@ acao_('carga.importar', function (d, s) {
   try { return Carga.importar(c, s.usuario); }
   finally { trava.releaseLock(); }
 });
+
+// Apaga todos os dados do app para uma nova carga. Mantém usuários, sessões e configurações.
+// Só pelo editor do Apps Script (Executar), nunca pelo app.
+var ABAS_DADOS = ['Contas', 'Despesas', 'Entradas', 'DreHistorico', 'Previsoes', 'Fornecedores', 'Clientes', 'Parcelamentos', 'Cheques', 'Logs'];
+function apagarDados() {
+  var ss = SpreadsheetApp.getActive(), trava = LockService.getScriptLock();
+  trava.waitLock(30000);
+  try {
+    ABAS_DADOS.forEach(function (aba) {
+      var sh = ss.getSheetByName(aba), n = sh ? sh.getLastRow() : 0;
+      if (n > 1) sh.deleteRows(2, n - 1);
+      Logger.log(aba + ': ' + Math.max(0, n - 1) + ' linha(s) apagada(s)');
+    });
+  } finally { trava.releaseLock(); }
+}
