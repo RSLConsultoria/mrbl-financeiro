@@ -13,7 +13,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   const iso = (d) => d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
   const parse = (s) => { if (!s) return new Date(NaN); const [y,m,d] = String(s).slice(0,10).split('-').map(Number); return new Date(y, m-1, d); };
   const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
-  const monday = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); return addDays(x, -((x.getDay()+6)%7)); };
+  // início da semana: sábado (semana de sábado a sexta, como o relatório semanal)
+  const monday = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); return addDays(x, -((x.getDay()+1)%7)); };
   const dm = (s) => { if (!s) return '—'; const d = parse(s); return pad(d.getDate()) + '/' + pad(d.getMonth()+1); };
   const dmy = (s) => { if (!s) return '—'; const d = parse(s); return pad(d.getDate()) + '/' + pad(d.getMonth()+1) + '/' + d.getFullYear(); };
   const DIAS = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
@@ -36,6 +37,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   let S = {
     contas: dados.contas || [], saidas: dados.saidas || [], entradas: dados.entradas || [], previsoes: dados.previsoes || [],
     fornecedores: dados.fornecedores || [], parcelamentos: dados.parcelamentos || [], cheques: dados.cheques || [], prazoOf: CFG.prazoOficinas == null ? 15 : +CFG.prazoOficinas,
+    ofFixas: Array.isArray(CFG.oficinasFixas) ? CFG.oficinasFixas : ['RAUL CALDERON'],
     prevReview: CFG.prevRevisao && typeof CFG.prevRevisao === 'object' ? CFG.prevRevisao : {},
     usuarios: (dados.usuarios || []).map((u) => u.nome), senhas: Object.fromEntries((dados.usuarios || []).map((u) => [u.nome, !!u.temSenha])),
     convites: Object.fromEntries((dados.usuarios || []).filter((u) => u.convite).map((u) => [u.nome, u.convite])),
@@ -44,7 +46,10 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   S.previsoes.forEach((p) => { if (!Array.isArray(p.subs)) p.subs = p.subs ? String(p.subs).split(';').map((x) => x.trim()).filter(Boolean) : []; });
   S.contas.forEach((c) => { if (!c.hist) c.hist = c.orig && c.orig !== c.data ? [{ de: c.orig, para: c.data, em: null }] : []; });
   const OFSUBS = [OF, OFSN];
-  const isOf = (c) => c.cat === AC && OFSUBS.includes(c.sub);
+  // Oficinas com pagamento fixo (ex.: Raul Calderon): não dependem de entrega; a conta fica na data do pagamento.
+  const nomeKey = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const isFixo = (nome) => (S.ofFixas || []).includes(nomeKey(nome));
+  const isOf = (c) => c.cat === AC && OFSUBS.includes(c.sub) && !isFixo(c.forn);
   const payFrom = (d) => { let x = addDays(parse(d), S.prazoOf); const w = x.getDay(); if (w === 6) x = addDays(x, 2); if (w === 0) x = addDays(x, 1); return iso(x); };
   function normalize(){
     if (S.prazoOf == null) S.prazoOf = 15;
@@ -83,10 +88,21 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   }
   const save = () => { aplicarDePara(); const msg = msgPendente; msgPendente = null; sync.salvar(S, msg, view.tela); };
   const logar = (txt, tela) => { S.logs.unshift({ em: agora(), por: S.user, txt, tela }); api.chamar('logs.registrar', { txt, tela }).catch(() => {}); };
+    // oficina que passou a ser fixa: a conta volta para a data da entrega (que era a data do pagamento) e sai do controle de entrega
+  function converterFixos(){
+    let n = 0;
+    (S.contas || []).forEach((c) => {
+      if (!c || c.cat !== AC || !OFSUBS.includes(c.sub) || !isFixo(c.forn) || !c.entrega) return;
+      if (!c.pago && !c.payManual && c.entrega !== c.data) { (c.log = c.log || []).push({ txt: 'Oficina com pagamento fixo: pagamento em ' + dmy(c.entrega) + ', sem controle de entrega', em: (() => { const d = new Date(); return iso(d) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()); })(), por: S.user }); c.data = c.entrega; }
+      n++; delete c.entrega; delete c.histEnt; delete c.recebidoEm;
+    });
+    return n;
+  }
 
   const blankD = () => ({ data: HOJE, cat: '', sub: '', emp: 'MRBL', valor: '', forn: '', resp: RESPS[RESPS.length-1] || '', obs: '', contaId: null });
   const blankE = () => ({ data: HOJE, cat: ECATS[0], cli: '', nf: '', valor: '', resp: RESPS[RESPS.length-1] || '', obs: '' });
   const view = { cfgTab: 'listas', cfgQ: '', pvYear: 0, cfgCat: AC, newSub: '', modal: null, dForm: blankD(), eForm: blankE(), dStatus: '', eStatus: '', drelTab: 'sai', dreProj: false, dreOpen: {}, drelMes: iso(TODAY).slice(0,7), relVis: 'semana', relMes: iso(TODAY).slice(0,7), relVal: 'all', relOpen: {}, prMes: (() => { const d = new Date(TODAY.getFullYear(), TODAY.getMonth()-1, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); })(), tela: 'pagar', ofWeek: iso(monday(TODAY)), receiving: null, week: iso(monday(TODAY)), addErr: '', paying: null, removing: null, proring: null, histOpen: null, newCat: CATS[0], pCat: AC };
+  if (converterFixos()) { msgPendente = 'Oficinas com pagamento fixo: contas ajustadas para a data do pagamento.'; save(); }
   let undoSnap = null, toastTimer = null;
   const snap = () => JSON.stringify(S);
   function toast(msg, canUndo){
@@ -899,7 +915,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     h += '<table class="ltab"><thead><tr><th>Fornecedor</th><th>Subcategoria</th><th></th></tr></thead><tbody>';
     h += '<tr class="ladd"><td><input id="cfNome" placeholder="Novo fornecedor" autocomplete="off"></td><td><select id="cfSub">' + subOpts(cat, view.cfNewSub == null ? '' : view.cfNewSub, true).replace('Todas as subcategorias', 'Qualquer subcategoria') + '</select></td><td class="r"><button type="button" class="btn sm y" id="cfAdd">Adicionar</button></td></tr>';
     if (!list.length) h += '<tr><td colspan="3" class="empty">' + (q ? 'Nenhum fornecedor com "' + esc(view.cfgQ) + '".' : 'Nenhum fornecedor ainda. Adicione o primeiro na linha acima.') + '</td></tr>';
-    list.forEach((f) => { h += '<tr data-fid="' + f.id + '"><td>' + esc(f.nome) + '</td><td class="m">' + (f.sub ? esc(f.sub) : 'qualquer') + '</td><td class="r"><button type="button" class="icon" data-cf="del" aria-label="Remover ' + esc(f.nome) + '" title="Remover"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td></tr>'; });
+    list.forEach((f) => { h += '<tr data-fid="' + f.id + '"><td>' + esc(f.nome) + (cat === AC && OFSUBS.includes(f.sub) ? ' <label class="fixo" title="Pagamento fixo: não depende de entrega"><input type="checkbox" data-cffixo="' + esc(f.nome) + '"' + (isFixo(f.nome) ? ' checked' : '') + '> pagamento fixo</label>' : '') + '</td><td class="m">' + (f.sub ? esc(f.sub) : 'qualquer') + '</td><td class="r"><button type="button" class="icon" data-cf="del" aria-label="Remover ' + esc(f.nome) + '" title="Remover"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></td></tr>'; });
     h += '</tbody></table>';
     if (cat === AC) h += '<div class="lfoot">Oficinas: pagamento <input id="prazoOf" class="num" value="' + S.prazoOf + '" inputmode="numeric" aria-label="Dias entre a chegada e o pagamento"> dias depois da chegada. Caindo no fim de semana, vai para segunda.</div>';
     return h + '</section></div>';
@@ -2053,6 +2069,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       act('Lançamento alterado.', () => { it[f] = t.value; if (f === 'cat' && L === 'saidas') it.sub = (LISTAS[t.value] || [''])[0]; }); return;
     }
     if (t.id === 'prMes') { view.prMes = t.value; render(); return; }
+    if (t.dataset && t.dataset.cffixo != null) { const k = nomeKey(t.dataset.cffixo), on = t.checked; act(t.dataset.cffixo + (on ? ' agora tem pagamento fixo (sem controle de entrega).' : ' volta a ter pagamento pela entrega.'), () => { S.ofFixas = on ? [...new Set([...(S.ofFixas || []), k])] : (S.ofFixas || []).filter((x) => x !== k); converterFixos(); normalize(); }); return; }
     if (t.id === 'prazoOf') { const n = parseInt(t.value,10); if (n >= 0 && n <= 120) act('Prazo das oficinas: ' + n + ' dias depois da entrega.', () => { S.prazoOf = n; S.contas.forEach(syncOf); }); else render(); return; }
     if (t.dataset.o === 'receb') {
       const c = byId(t.closest('[data-id]').dataset.id); const d = t.value || null;

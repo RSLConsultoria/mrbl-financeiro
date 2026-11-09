@@ -2,7 +2,7 @@
 // na próxima, compara registro a registro pelo id. As gravações saem em fila, na ordem em que foram feitas.
 export const COLECOES = { contas: 'Contas', saidas: 'Despesas', entradas: 'Entradas', previsoes: 'Previsoes', fornecedores: 'Fornecedores', parcelamentos: 'Parcelamentos', cheques: 'Cheques' };
 
-const configDe = (S) => ({ prazoOficinas: S.prazoOf, prevRevisao: JSON.stringify(S.prevReview || {}) });
+const configDe = (S) => ({ prazoOficinas: S.prazoOf, prevRevisao: JSON.stringify(S.prevReview || {}), oficinasFixas: JSON.stringify(S.ofFixas || []) });
 
 export function fotografar(S) {
   const f = {};
@@ -28,6 +28,7 @@ export function diferenca(antes, S) {
   const cAnt = antes.config || {}, cNovo = configDe(S), cfg = {};
   if (cAnt.prazoOficinas !== cNovo.prazoOficinas) cfg.prazoOficinas = cNovo.prazoOficinas;
   if (cAnt.prevRevisao !== cNovo.prevRevisao) cfg.prevRevisao = JSON.parse(cNovo.prevRevisao);
+  if (cAnt.oficinasFixas !== cNovo.oficinasFixas) cfg.oficinasFixas = JSON.parse(cNovo.oficinasFixas);
   if (Object.keys(cfg).length) { mud.Config = cfg; vazio = false; }
   return { mud, vazio };
 }

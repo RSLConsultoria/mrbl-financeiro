@@ -27,3 +27,6 @@ li.pq.old{color:var(--muted)}li.pq.late .d{color:var(--danger-ink);font-weight:7
 table.ptab.pchq{min-width:760px}table.pchq tr[data-qid]{cursor:pointer}table.pchq tr[data-qid]:hover td{background:var(--blue-soft)}table.pchq td{vertical-align:middle}table.pchq tr.pst td{font-weight:700;background:var(--bg)}table.pchq tr.ptotg td{border-top:2px solid var(--navy)}
 .modal.xwide{width:min(1160px,100%)}.modal.xwide .egrid{grid-template-columns:minmax(0,1fr) minmax(0,500px)}.modal.xwide .tlscroll{max-height:340px}
 @media (max-width:900px){.modal.xwide .egrid{grid-template-columns:1fr}}
+
+/* oficina com pagamento fixo */
+.ltab label.fixo{margin-left:8px;font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap;cursor:pointer}.ltab label.fixo input{vertical-align:-2px;margin-right:3px}

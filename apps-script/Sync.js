@@ -1,7 +1,7 @@
 // Sincronização das telas com a planilha.
 // As telas carregam tudo ao entrar (dados.carregar) e, a cada ação, mandam só o que mudou (sync.aplicar).
 var ABAS_APP = { Contas: 'contas', Despesas: 'saidas', Entradas: 'entradas', Previsoes: 'previsoes', Fornecedores: 'fornecedores', Clientes: 'clientes', Parcelamentos: 'parcelamentos', Cheques: 'cheques' };
-var CONFIG_EDITAVEL = ['prazoOficinas', 'prevRevisao'];
+var CONFIG_EDITAVEL = ['prazoOficinas', 'prevRevisao', 'oficinasFixas'];
 
 var Sync = {
   // Objeto do app -> linha da aba. Campos sem coluna vão para "extra".
