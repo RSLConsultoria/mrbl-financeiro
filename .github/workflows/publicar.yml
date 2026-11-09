@@ -38,12 +38,15 @@ jobs:
           CLASPRC: ${{ secrets.CLASPRC_JSON }}
           DEP: ${{ vars.APPS_SCRIPT_DEPLOYMENT_ID }}
         run: |
+          ok=0
           if [ -n "$SENHA" ]; then
             body=$(node -e 'console.log(JSON.stringify({ acao: "deploy.publicar", dados: { sha: process.env.GITHUB_SHA, senha: process.env.SENHA } }))')
-            resp=$(curl -sSL --max-time 300 -H 'Content-Type: text/plain;charset=utf-8' --data "$body" "$URL")
+            resp=$(curl -sSL --max-time 300 -H 'Content-Type: text/plain;charset=utf-8' --data "$body" "$URL" || true)
             echo "$resp"
-            echo "$resp" | grep -q '"ok":true' || { echo "::error::O Apps Script não se atualizou."; exit 1; }
-          else
+            if echo "$resp" | grep -q '"ok":true'; then ok=1; else echo "::warning::O Apps Script não se atualizou sozinho; tentando pelo clasp."; fi
+          fi
+          if [ "$ok" = 0 ]; then
+            [ -n "$CLASPRC" ] || { echo "::error::Sem DEPLOY_SENHA funcionando e sem CLASPRC_JSON."; exit 1; }
             echo "$CLASPRC" > ~/.clasprc.json
             npx clasp push --force
             npx clasp deploy -i "$DEP" -d "$GITHUB_SHA"

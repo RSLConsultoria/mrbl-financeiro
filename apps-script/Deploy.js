@@ -53,8 +53,14 @@ var Deploy = {
 };
 acao_('deploy.publicar', function (d) { return Deploy.publicar(d); }, true);
 
-// Rode uma vez pelo editor (Executar) para autorizar as permissões novas (baixar do GitHub e atualizar o próprio projeto).
+// Rode pelo editor (Executar) para autorizar as permissões novas (baixar do GitHub e atualizar o próprio projeto).
+// O registro de execução mostra as permissões que o Google concedeu e se a Apps Script API respondeu.
 function autorizarPublicacao() {
   UrlFetchApp.fetch(REPO_RAW + 'main/README.md', { muteHttpExceptions: true });
-  Logger.log('Projeto ' + ScriptApp.getScriptId() + ' autorizado. Token: ' + (ScriptApp.getOAuthToken() ? 'ok' : 'faltando'));
+  var tok = ScriptApp.getOAuthToken();
+  var info = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?access_token=' + tok, { muteHttpExceptions: true }).getContentText();
+  var escopos = (JSON.parse(info).scope || '').split(' ').filter(function (x) { return /script|spreadsheets/.test(x); });
+  var api = UrlFetchApp.fetch(API_SCRIPT + ScriptApp.getScriptId() + '/deployments', { headers: { Authorization: 'Bearer ' + tok }, muteHttpExceptions: true });
+  Logger.log('Permissões: ' + escopos.join(', '));
+  Logger.log('Apps Script API: HTTP ' + api.getResponseCode() + (api.getResponseCode() === 200 ? ' (ok)' : ' ' + api.getContentText().slice(0, 300)));
 }
