@@ -52,6 +52,7 @@ export function criarFakes({ agora = () => Date.now() } = {}) {
   const ss = new FakeSpreadsheet();
   const cache = new Map();
   const props = new Map([['PEPPER', 'pepper-de-teste']]);
+  const fetches = { feitos: [], responder: () => ({ code: 404, body: '' }) };
   return {
     ss,
     cache,
@@ -63,7 +64,12 @@ export function criarFakes({ agora = () => Date.now() } = {}) {
       remove: (k) => { cache.delete(k); },
     }) },
     LockService: { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    props,
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (props.has(k) ? props.get(k) : null) }) },
+    // UrlFetchApp e ScriptApp: os testes trocam fetches.responder para simular GitHub e Apps Script API.
+    fetches,
+    UrlFetchApp: { fetch(url, o) { const f = fetches; f.feitos.push({ url, o: o || {} }); const r = f.responder(url, o || {}); return { getResponseCode: () => r.code, getContentText: () => r.body }; } },
+    ScriptApp: { getScriptId: () => 'SCRIPT123', getOAuthToken: () => 'tok' },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'sha256' },
       Charset: { UTF_8: 'utf8' },

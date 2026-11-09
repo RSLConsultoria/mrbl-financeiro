@@ -9,6 +9,7 @@
     "apps-script/Main.js",
     "apps-script/Escrita.js",
     "apps-script/Sync.js",
-    "apps-script/Carga.js"
+    "apps-script/Carga.js",
+    "apps-script/Deploy.js"
   ]
 }
