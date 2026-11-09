@@ -1524,6 +1524,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   function cbxMove(d){ if (!cbx) return; cbx.act = Math.max(0, Math.min(cbx.f.length - 1, cbx.act + d)); document.querySelectorAll('#cbxHost li').forEach((li, i) => { li.classList.toggle('on', i === cbx.act); if (i === cbx.act) li.scrollIntoView({ block: 'nearest' }); }); }
   document.addEventListener('mousedown', (e) => {
     const li = e.target.closest && e.target.closest('#cbxHost li'); if (li) { e.preventDefault(); if (li.dataset.i != null) cbxPick(+li.dataset.i); return; }
+    // clique na barra de rolagem da lista: mantém a lista aberta
+    if (e.target.closest && e.target.closest('#cbxHost')) { e.preventDefault(); return; }
     const inp = e.target.closest && e.target.closest('input[data-cbx]');
     if (inp) { if (cbx && cbx.inp === inp) cbxClose(); else setTimeout(() => cbxOpen(inp, true), 0); return; }
     if (cbx) cbxClose();
@@ -1537,7 +1539,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     else if (e.key === 'Escape' && cbx) { e.preventDefault(); e.stopPropagation(); cbxClose(); }
     else if (e.key === 'Tab') cbxClose();
   }, true);
-  window.addEventListener('scroll', () => { if (cbx) cbxClose(); }, true);
+  // rolar a página fecha a lista; rolar a própria lista não
+  window.addEventListener('scroll', (e) => { if (cbx && !(e.target && e.target.closest && e.target.closest('#cbxHost'))) cbxClose(); }, true);
   window.addEventListener('resize', () => { if (cbx) cbxClose(); });
   function openCal(anchor, o){
     const v = o.value || (anchor.value && anchor.value.length === 10 ? anchor.value : '') || '';
