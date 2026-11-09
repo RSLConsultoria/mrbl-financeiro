@@ -56,6 +56,13 @@ acao_('deploy.publicar', function (d) { return Deploy.publicar(d); }, true);
 // Rode pelo editor (Executar) para autorizar as permissões novas (baixar do GitHub e atualizar o próprio projeto).
 // O registro de execução mostra as permissões que o Google concedeu e se a Apps Script API respondeu.
 function autorizarPublicacao() {
+  // Força o Google a pedir as permissões que ficaram desmarcadas na tela de consentimento.
+  ScriptApp.requireScopes(ScriptApp.AuthMode.FULL, [
+    'https://www.googleapis.com/auth/script.projects',
+    'https://www.googleapis.com/auth/script.deployments',
+    'https://www.googleapis.com/auth/script.external_request',
+    'https://www.googleapis.com/auth/spreadsheets'
+  ]);
   UrlFetchApp.fetch(REPO_RAW + 'main/README.md', { muteHttpExceptions: true });
   var tok = ScriptApp.getOAuthToken();
   var info = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?access_token=' + tok, { muteHttpExceptions: true }).getContentText();

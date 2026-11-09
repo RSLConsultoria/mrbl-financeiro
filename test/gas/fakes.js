@@ -69,7 +69,7 @@ export function criarFakes({ agora = () => Date.now() } = {}) {
     // UrlFetchApp e ScriptApp: os testes trocam fetches.responder para simular GitHub e Apps Script API.
     fetches,
     UrlFetchApp: { fetch(url, o) { const f = fetches; f.feitos.push({ url, o: o || {} }); const r = f.responder(url, o || {}); return { getResponseCode: () => r.code, getContentText: () => r.body }; } },
-    ScriptApp: { getScriptId: () => 'SCRIPT123', getOAuthToken: () => 'tok' },
+    ScriptApp: { getScriptId: () => 'SCRIPT123', getOAuthToken: () => 'tok', requireScopes: () => {}, AuthMode: { FULL: 'FULL' } },
     Utilities: {
       DigestAlgorithm: { SHA_256: 'sha256' },
       Charset: { UTF_8: 'utf8' },
