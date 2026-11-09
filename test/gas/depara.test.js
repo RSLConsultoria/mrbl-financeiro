@@ -40,3 +40,31 @@ describe('de-para ignora o que o app nomeia', () => {
     expect(g.gerarDePara().linhas).toBe(0);
   });
 });
+
+describe('aplicar o de-para', () => {
+  it('troca os nomes em todas as abas, junta fornecedores repetidos e guarda o mapa', () => {
+    const g = carregarServidor();
+    g.Db.inserir('Usuarios', { nome: 'Lucca', convite: 'T', ativo: true });
+    const tok = JSON.parse(g.doPost({ postData: { contents: JSON.stringify({ acao: 'auth.criarSenha', dados: { nome: 'Lucca', convite: 'T', senha: 'teste123' } }) } }).getContent()).dados.token;
+    const C = (id, forn, extra) => g.Sync.paraLinha('Contas', { id, data: '2026-10-10', forn, cat: 'ACESSORIAS', sub: 'OF', valor: 1, hist: [], log: [], ...extra });
+    g.Db.gravarLote('Contas', [C('c1', 'ELVA SERRUDA OUTUBRO'), C('c2', 'elva serruda  novembro'), C('c3', 'ITAU · 1/60', { parcId: 'p' })], []);
+    g.Db.gravarLote('Despesas', [{ id: 'd1', data: '2026-10-01', cat: 'ACESSORIAS', sub: 'OF', forn: 'ELVA SERRUDA OUTUBRO', valor: 1 }], []);
+    g.Db.gravarLote('Fornecedores', [{ id: 'f1', nome: 'ELVA SERRUDA OUTUBRO', cat: 'ACESSORIAS', sub: 'OF' }, { id: 'f2', nome: 'ELVA SERRUDA NOVEMBRO', cat: 'ACESSORIAS', sub: 'OF' }], []);
+    g.Db.gravarLote('Entradas', [{ id: 'e1', data: '2026-10-01', cat: 'RECEBIMENTO DE CLIENTE', cli: 'LELIS', valor: 1 }], []);
+    g.Db.gravarLote('Clientes', [{ nome: 'LELIS' }], []);
+    const mapa = [
+      { lista: 'Fornecedores', cat: 'ACESSORIAS', orig: 'ELVA SERRUDA OUTUBRO', alvo: 'ELVA SERRUDA' },
+      { lista: 'Fornecedores', cat: 'ACESSORIAS', orig: 'ELVA SERRUDA NOVEMBRO', alvo: 'ELVA SERRUDA ' },
+      { lista: 'Clientes', cat: 'RECEBIMENTO DE CLIENTE', orig: 'LELIS', alvo: 'LE LIS BLANC' },
+    ];
+    const r = JSON.parse(g.doPost({ postData: { contents: JSON.stringify({ acao: 'depara.aplicar', token: tok, dados: { mapa } }) } }).getContent());
+    expect(r.ok).toBe(true);
+    expect(g.Db.todos('Contas').map((c) => c.forn)).toEqual(['ELVA SERRUDA', 'ELVA SERRUDA', 'ITAU · 1/60']);
+    expect(g.Db.todos('Contas')[0].log.at(-1).txt).toContain('ELVA SERRUDA OUTUBRO → ELVA SERRUDA');
+    expect(g.Db.todos('Despesas')[0].forn).toBe('ELVA SERRUDA');
+    expect(g.Db.todos('Fornecedores').map((f) => f.nome)).toEqual(['ELVA SERRUDA']);
+    expect(g.Db.todos('Entradas')[0].cli).toBe('LE LIS BLANC');
+    expect(g.Db.todos('Clientes').map((c) => c.nome)).toEqual(['LE LIS BLANC']);
+    expect(Object.keys(JSON.parse(g.Db.pegar('Config', 'depara').valor)).length).toBe(3);
+  });
+});

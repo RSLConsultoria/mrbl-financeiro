@@ -101,3 +101,68 @@ function gerarDePara() {
   Logger.log('Planilha de de-para: ' + url);
   return { linhas: linhas.length, muda: muda, url: url };
 }
+
+// ---- aplicar o de-para ----
+// mapa: [{ lista: 'Fornecedores'|'Clientes', cat, orig, alvo }]. Troca o nome em contas (menos parcelas e cheques),
+// despesas, entradas, fornecedores e clientes; junta fornecedores/clientes que ficaram repetidos; e guarda o mapa em
+// Config.depara para o app aplicar sozinho daqui para frente.
+DePara.chave = function (lista, cat, nome) {
+  return lista + '|' + DePara.semAcento(cat).trim() + '|' + DePara.semAcento(nome).replace(/\s+/g, ' ').trim();
+};
+DePara.aplicar = function (mapa, por) {
+  var M = {}, n = 0;
+  (mapa || []).forEach(function (m) {
+    var alvo = String(m.alvo || '').replace(/\s+/g, ' ').trim();
+    if (!alvo || !m.orig) return;
+    M[DePara.chave(m.lista, m.cat || '', m.orig)] = alvo; n++;
+  });
+  var hoje = agora_(), cont = { contas: 0, despesas: 0, entradas: 0, fornecedores: 0, clientes: 0, juntados: 0 };
+  function novo(lista, cat, nome) { var a = M[DePara.chave(lista, cat || '', nome || '')]; return a && a !== String(nome || '').trim() ? a : null; }
+  var ups = [];
+  Db.todos('Contas').forEach(function (c) {
+    var x = c.extra || {};
+    if (x.parcId || x.chqId) return;
+    var a = novo('Fornecedores', c.cat, c.forn); if (!a) return;
+    var log = Array.isArray(c.log) ? c.log : [];
+    log.push({ txt: 'Nome unificado (de-para): ' + c.forn + ' → ' + a, em: hoje, por: por });
+    c.forn = a; c.log = log; ups.push(c); cont.contas++;
+  });
+  if (ups.length) Db.gravarLote('Contas', ups, []);
+  ups = [];
+  Db.todos('Despesas').forEach(function (d) { var a = novo('Fornecedores', d.cat, d.forn); if (a) { d.forn = a; ups.push(d); cont.despesas++; } });
+  if (ups.length) Db.gravarLote('Despesas', ups, []);
+  ups = [];
+  Db.todos('Entradas').forEach(function (e) { var a = novo('Clientes', e.cat, e.cli); if (a) { e.cli = a; ups.push(e); cont.entradas++; } });
+  if (ups.length) Db.gravarLote('Entradas', ups, []);
+  // fornecedores: renomeia e junta os que ficaram iguais (mesma categoria, subcategoria e nome)
+  ups = []; var dels = [], vistos = {};
+  Db.todos('Fornecedores').forEach(function (f) {
+    var a = novo('Fornecedores', f.cat, f.nome); if (a) { f.nome = a; cont.fornecedores++; }
+    var k = DePara.chave('F', (f.cat || '') + '|' + (f.sub || ''), f.nome);
+    if (vistos[k]) { dels.push(f.id); cont.juntados++; return; }
+    vistos[k] = true; if (a) ups.push(f);
+  });
+  if (ups.length || dels.length) Db.gravarLote('Fornecedores', ups, dels);
+  // clientes (lista simples de nomes): os novos nomes entram, os antigos que mudaram saem
+  var cli = Db.todos('Clientes'), ja = {}, novos = [], fora = [];
+  cli.forEach(function (c) { ja[DePara.semAcento(c.nome).trim()] = true; });
+  cli.forEach(function (c) {
+    var alvo = null;
+    Object.keys(M).forEach(function (k) { if (!alvo && k.indexOf('Clientes|') === 0 && k.split('|')[2] === DePara.semAcento(c.nome).replace(/\s+/g, ' ').trim()) alvo = M[k]; });
+    if (!alvo || alvo === c.nome) return;
+    fora.push(c.nome); cont.clientes++;
+    if (!ja[DePara.semAcento(alvo).trim()]) { ja[DePara.semAcento(alvo).trim()] = true; novos.push({ nome: alvo }); }
+  });
+  if (novos.length || fora.length) Db.gravarLote('Clientes', novos, fora);
+  Db.gravarLote('Config', [{ chave: 'depara', valor: JSON.stringify(M) }], []);
+  cont.regras = n;
+  return cont;
+};
+acao_('depara.aplicar', function (d, s) {
+  Usuarios.exigirAdmin_(s);
+  return mutar_(s, 'cfg', function () {
+    var r = DePara.aplicar(d.mapa, s.usuario);
+    r.msg = 'De-para aplicado: ' + r.contas + ' contas, ' + r.despesas + ' despesas, ' + r.entradas + ' entradas, ' + r.fornecedores + ' fornecedores renomeados (' + r.juntados + ' repetidos juntados)';
+    return r;
+  });
+});

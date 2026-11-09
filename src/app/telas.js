@@ -67,7 +67,21 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   // grava na planilha só o que mudou desde a última gravação
   let msgPendente = null;
   sync.base(S);
-  const save = () => { const msg = msgPendente; msgPendente = null; sync.salvar(S, msg, view.tela); };
+  // De-para das listas (Config.depara): nome antigo → nome único. Aplicado a cada gravação, então um nome antigo
+  // digitado ou vindo de planilha vira o nome certo antes de chegar na base.
+  const DEPARA = CFG.depara && typeof CFG.depara === 'object' ? CFG.depara : {};
+  const semAc = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  const dpKey = (lista, cat, nome) => lista + '|' + semAc(cat).trim() + '|' + semAc(nome).replace(/\s+/g, ' ').trim();
+  function aplicarDePara(){
+    if (!Object.keys(DEPARA).length) return;
+    const troca = (lista, cat, nome) => { const a = DEPARA[dpKey(lista, cat || '', nome || '')]; return a && a !== nome ? a : null; };
+    S.contas.forEach((c) => { if (c.parcId || c.chqId) return; const a = troca('Fornecedores', c.cat, c.forn); if (a) c.forn = a; });
+    S.saidas.forEach((d) => { const a = troca('Fornecedores', d.cat, d.forn); if (a) d.forn = a; });
+    S.entradas.forEach((e) => { const a = troca('Clientes', e.cat, e.cli); if (a) e.cli = a; });
+    const vistos = new Set();
+    S.fornecedores = (S.fornecedores || []).filter((f) => { const a = troca('Fornecedores', f.cat, f.nome); if (a) f.nome = a; const k = dpKey(f.cat + '|' + (f.sub || ''), '', f.nome); if (vistos.has(k)) return false; vistos.add(k); return true; });
+  }
+  const save = () => { aplicarDePara(); const msg = msgPendente; msgPendente = null; sync.salvar(S, msg, view.tela); };
   const logar = (txt, tela) => { S.logs.unshift({ em: agora(), por: S.user, txt, tela }); api.chamar('logs.registrar', { txt, tela }).catch(() => {}); };
 
   const blankD = () => ({ data: HOJE, cat: '', sub: '', emp: 'MRBL', valor: '', forn: '', resp: RESPS[RESPS.length-1] || '', obs: '', contaId: null });
