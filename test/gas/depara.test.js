@@ -32,3 +32,11 @@ describe('de-para das listas', () => {
     expect(g.SpreadsheetApp.criadas.length).toBe(1);
   });
 });
+
+describe('de-para ignora o que o app nomeia', () => {
+  it('não lista parcelas de parcelamento nem cheques', () => {
+    const g = carregarServidor();
+    g.Db.gravarLote('Contas', [g.Sync.paraLinha('Contas', { id: 'c1', data: '2026-11-10', forn: 'ITAU · 17/60', cat: 'FINANCIAMENTOS', sub: 'X', valor: 1, hist: [], parcId: 'pc1', parcN: 17 })], []);
+    expect(g.gerarDePara().linhas).toBe(0);
+  });
+});

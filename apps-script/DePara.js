@@ -37,7 +37,8 @@ var DePara = {
       r.valor += +valor || 0;
       if (data && String(data) > r.ultimo) r.ultimo = String(data).slice(0, 10);
     }
-    Db.todos('Contas').forEach(function (c) { if (!c.dreId) add('Fornecedores', c.cat || '', c.forn, c.sub, 'conta', c.valor, c.data); });
+    // parcelas de parcelamento e cheques têm o nome montado pelo app ("ITAU · 17/60"): ficam fora
+    Db.todos('Contas').forEach(function (c) { var x = c.extra || {}; if (!c.dreId && !x.parcId && !x.chqId) add('Fornecedores', c.cat || '', c.forn, c.sub, 'conta', c.valor, c.data); });
     Db.todos('Despesas').forEach(function (d) { add('Fornecedores', d.cat || '', d.forn, d.sub, 'dre', d.valor, d.data); });
     Db.todos('Fornecedores').forEach(function (f) { add('Fornecedores', f.cat || '', f.nome, f.sub, '', 0, ''); });
     Db.todos('Entradas').forEach(function (e) { add('Clientes', e.cat || '', e.cli, '', 'dre', e.valor, e.data); });
