@@ -1,6 +1,6 @@
 // Sincronização das telas com a planilha.
 // As telas carregam tudo ao entrar (dados.carregar) e, a cada ação, mandam só o que mudou (sync.aplicar).
-var ABAS_APP = { Contas: 'contas', Despesas: 'saidas', Entradas: 'entradas', Previsoes: 'previsoes', Fornecedores: 'fornecedores', Clientes: 'clientes' };
+var ABAS_APP = { Contas: 'contas', Despesas: 'saidas', Entradas: 'entradas', Previsoes: 'previsoes', Fornecedores: 'fornecedores', Clientes: 'clientes', Parcelamentos: 'parcelamentos', Cheques: 'cheques' };
 var CONFIG_EDITAVEL = ['prazoOficinas', 'prevRevisao'];
 
 var Sync = {
@@ -64,7 +64,7 @@ var Sync = {
         if (!m) return;
         var k = chaveDe_(aba);
         var atuais = {};
-        if (aba === 'Despesas' || aba === 'Entradas' || aba === 'Contas') Db.todos(aba).forEach(function (r) { atuais[String(r[k])] = r; });
+        if (SCHEMA[aba].indexOf('criadoEm') >= 0) Db.todos(aba).forEach(function (r) { atuais[String(r[k])] = r; });
         var ups = (m.up || []).map(function (o) {
           if (o[k] === undefined || o[k] === null || o[k] === '') throw Auth.erro('sem_chave', 'Registro sem ' + k + ' na aba ' + aba + '.');
           var r = Sync.paraLinha(aba, o), antes = atuais[String(o[k])];
@@ -74,6 +74,7 @@ var Sync = {
             r.criadoEm = antes ? antes.criadoEm : agora;
             if (aba === 'Entradas' && r.cli) novosClientes[String(r.cli).trim()] = true;
           }
+          if (aba === 'Parcelamentos' || aba === 'Cheques') r.criadoEm = antes ? antes.criadoEm : agora;
           if (aba === 'Contas') { r.criadoEm = antes ? antes.criadoEm : agora; r.criadoPor = antes ? antes.criadoPor : sess.usuario; }
           return r;
         });

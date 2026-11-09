@@ -1,8 +1,19 @@
 // Leitura e escrita das abas como listas de objetos. Guarda um diário das mudanças para o "Desfazer".
 var Db = (function () {
   var diario = null;
+  // Aba nova do esquema (versão nova do app): cria com o cabeçalho, antes de Logs.
+  function criarAba_(nome) {
+    var ss = SpreadsheetApp.getActive(), cols = SCHEMA[nome], logs = ss.getSheetByName('Logs');
+    var sh = ss.insertSheet(nome);
+    sh.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    cols.forEach(function (c, i) { if (COLUNAS_TEXTO.indexOf(c) >= 0 || COLUNAS_JSON.indexOf(c) >= 0) sh.getRange(1, i + 1, sh.getMaxRows(), 1).setNumberFormat('@'); });
+    if (logs) { ss.setActiveSheet(logs); ss.moveActiveSheet(ss.getSheets().length); }
+    return sh;
+  }
   function aba_(nome) {
     var sh = SpreadsheetApp.getActive().getSheetByName(nome);
+    if (!sh && SCHEMA[nome]) sh = criarAba_(nome);
     if (!sh) throw new Error('Aba não existe: ' + nome + '. Rode setupPlanilha().');
     return sh;
   }

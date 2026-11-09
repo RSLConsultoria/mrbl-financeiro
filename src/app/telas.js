@@ -35,7 +35,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   const CFG = dados.config || {};
   let S = {
     contas: dados.contas || [], saidas: dados.saidas || [], entradas: dados.entradas || [], previsoes: dados.previsoes || [],
-    fornecedores: dados.fornecedores || [], prazoOf: CFG.prazoOficinas == null ? 15 : +CFG.prazoOficinas,
+    fornecedores: dados.fornecedores || [], parcelamentos: dados.parcelamentos || [], cheques: dados.cheques || [], prazoOf: CFG.prazoOficinas == null ? 15 : +CFG.prazoOficinas,
     prevReview: CFG.prevRevisao && typeof CFG.prevRevisao === 'object' ? CFG.prevRevisao : {},
     usuarios: (dados.usuarios || []).map((u) => u.nome), senhas: Object.fromEntries((dados.usuarios || []).map((u) => [u.nome, !!u.temSenha])),
     convites: Object.fromEntries((dados.usuarios || []).filter((u) => u.convite).map((u) => [u.nome, u.convite])),
@@ -173,6 +173,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   function modalHTML(){
     if (!view.modal) return '';
     if (view.modal === 'pvimp') return pvImpHTML();
+    if (view.modal === 'parcnew' || view.modal === 'parcedit') return parcModalHTML();
+    if (view.modal === 'chqnew' || view.modal === 'chqedit') return chqModalHTML();
     const fld = (lab, ctl) => '<label class="ff"><span>' + lab + '</span>' + ctl + '</label>';
     if (view.modal === 'ofedit') {
       const c = byId(view.editId); if (!c) { view.modal = null; return ''; }
@@ -230,6 +232,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
         fld('Subcategoria', '<select id="kSub">' + subOpts(ed.cat, ed.sub) + '</select>') +
         fld('Fornecedor', '<input id="kForn" data-cbx="kFornList" data-novo="1" value="' + esc(ed.forn) + '" autocomplete="off"><datalist id="kFornList">' + fornOpts(ed.cat, ed.sub) + '</datalist>') +
         fld('Valor', '<input id="kVal" class="val" value="' + num(ed.valor) + '" inputmode="decimal">') +
+        (c.parcId && pById(c.parcId) ? '<p class="enote">Parcela ' + c.parcN + '/' + pById(c.parcId).qtd + ' do parcelamento <b>' + esc(pById(c.parcId).nome) + '</b>. <button type="button" class="lnk" data-goparc="' + c.parcId + '">Ver em Parcelamentos ›</button></p>' : '') +
         fld('Observação', '<textarea id="kObs" rows="3" placeholder="Escreva uma observação. Ao salvar, ela entra na linha do tempo com seu nome.">' + esc(ed.obs || '') + '</textarea>') +
         (ed.data !== c.data && !c.pago ? '<p class="enote">A data muda de ' + dmy(c.data) + ' para ' + dmy(ed.data) + (ed.data > c.data ? ' e entra no histórico como prorrogação.' : '.') + '</p>' : '') +
         '</div><div class="tlbox"><h3>Linha do tempo</h3><div class="tlscroll">' + tl + '</div>' +
@@ -261,6 +264,418 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       fld('Observação', '<textarea id="oObs" rows="3" placeholder="Opcional. Fica na linha do tempo da conta."></textarea>') +
       '<p style="margin:0;color:var(--muted);font-size:13px">O pagamento entra em Contas a pagar ' + S.prazoOf + ' dias depois da chegada.</p><div class="fact"><span class="grow"></span><button type="button" class="btn y" id="btnAddOf">Adicionar entrega</button></div></div></div></div>';
   }
+  // ---------- parcelamentos ----------
+  // Um parcelamento gera (ou liga) uma conta em Contas a pagar para cada parcela que falta.
+  // O que está pago, em aberto e o saldo saem sempre dessas contas: pagar a parcela lá já desconta aqui.
+  const EMPS_P = ['MRBL', 'STOFFA'];
+  const novoIdP = novoId;
+  const C = (data, forn, cat, sub, valor, extra) => Object.assign({ id: novoId('c'), data, orig: null, forn, cat, sub, valor, pago: false, pagoEm: null, hist: [] }, extra || {});
+  const addMes = (s, k) => { const [y, m, d] = String(s).split('-').map(Number); const ult = new Date(y, m - 1 + k + 1, 0).getDate(); return iso(new Date(y, m - 1 + k, Math.min(d, ult))); };
+  const pById = (id) => (S.parcelamentos || []).find((p) => p.id === id);
+  const parcForn = (p, n) => p.nome + ' · ' + n + '/' + p.qtd;
+  function parcContas(p){ return S.contas.filter((c) => c.parcId === p.id).sort((a, b) => (a.parcN - b.parcN) || a.data.localeCompare(b.data)); }
+  function parcInfo(p){
+    const cs = parcContas(p);
+    const pagasSis = cs.filter((c) => c.pago), abertas = cs.filter((c) => !c.pago).sort((a, b) => a.data.localeCompare(b.data));
+    const pagas = (p.pagasAntes || 0) + pagasSis.length;
+    const saldo = abertas.reduce((a, c) => a + c.valor, 0);
+    const pago = (p.pagasAntes || 0) * p.valorParcela + pagasSis.reduce((a, c) => a + c.valor, 0);
+    const fim = cs.reduce((a, c) => (c.data > a ? c.data : a), '');
+    return { cs, pagas, abertas, saldo, pago, prox: abertas[0] || null, venc: abertas.filter((c) => c.data < HOJE), fim: fim || null, quitado: !abertas.length };
+  }
+  // Conta que já está em Contas a pagar e é esta parcela: mesma subcategoria, até 12 dias e valor até 12% diferente
+  // (parcelamento de imposto muda um pouco de valor todo mês por causa da correção).
+  function acharParcela(p, data, usadas){
+    let best = null;
+    S.contas.forEach((c) => {
+      if (c.parcId || usadas.has(c.id) || !p.cat || c.cat !== p.cat || (p.sub && c.sub !== p.sub)) return;
+      const dd = Math.abs(parse(c.data) - parse(data)) / 864e5, dv = Math.abs(c.valor - p.valorParcela) / Math.max(1, p.valorParcela);
+      if (dd > 12 || dv > 0.12) return;
+      const nota = dv * 10 + dd / 12;
+      if (!best || nota < best[0]) best = [nota, c];
+    });
+    return best ? best[1] : null;
+  }
+  function gerarParcelas(p, primeiro, deN){
+    let ligadas = 0, criadas = 0; const usadas = new Set();
+    for (let n = deN, k = 0; n <= p.qtd; n++, k++) {
+      const data = addMes(primeiro, k);
+      const ja = acharParcela(p, data, usadas);
+      if (ja) { usadas.add(ja.id); ja.parcId = p.id; ja.parcN = n; logC(ja, 'Ligada ao parcelamento ' + p.nome + ' como parcela ' + n + '/' + p.qtd); ligadas++; continue; }
+      const c = C(data, parcForn(p, n), p.cat, p.sub, p.valorParcela, { id: novoIdP('c'), hist: [], parcId: p.id, parcN: n });
+      logC(c, 'Criada pelo parcelamento ' + p.nome + ' (parcela ' + n + '/' + p.qtd + ')');
+      S.contas.push(c); criadas++;
+    }
+    return { ligadas, criadas };
+  }
+  function logP(p, txt){ (p.log = p.log || []).push({ txt, em: agora(), por: S.user }); }
+  function blankPF(){ return { nome: '', emp: 'MRBL', cat: '', sub: '', valor: '', qtd: '', total: '', pagasAntes: '0', primeiro: addMes(HOJE.slice(0, 8) + '10', 1), obs: '' }; }
+  function openParc(p){ view.modal = 'parcedit'; view.pid = p.id; view.pcDel = false; view.pTab = 'parcelas'; view.pf = { nome: p.nome, emp: p.emp || 'MRBL', cat: p.cat || '', sub: p.sub || '', valor: num(p.valorParcela), qtd: String(p.qtd), total: num(p.valorTotal || p.valorParcela * p.qtd), obs: '' }; if (cal) closeCal(); render(); }
+  // Lê o formulário (novo ou edição). Devolve { erro } ou os valores já convertidos.
+  function lerPF(novo){
+    const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const f = { nome: g('pcNome').trim(), emp: g('pcEmp'), cat: g('pcCat'), sub: g('pcSub'), valor: parseVal(g('pcVal')), qtd: parseInt(g('pcQtd'), 10), total: parseVal(g('pcTot')), obs: g('pcObs').trim() };
+    if (novo) { f.pagasAntes = parseInt(g('pcPagas') || '0', 10); f.primeiro = g('pcPrim'); }
+    if (!f.nome) return { erro: 'Dê um nome ao parcelamento.' };
+    if (!(f.valor > 0)) return { erro: 'Informe o valor da parcela.' };
+    if (!(f.qtd >= 1)) return { erro: 'Informe a quantidade de parcelas.' };
+    if (!(f.total > 0)) f.total = Math.round(f.valor * f.qtd * 100) / 100;
+    if (novo) {
+      if (!(f.pagasAntes >= 0) || f.pagasAntes >= f.qtd) return { erro: 'Parcelas já pagas tem que ser menor que a quantidade de parcelas.' };
+      if (!f.primeiro) return { erro: 'Escolha o vencimento da próxima parcela.' };
+    }
+    return f;
+  }
+  function salvarNovoParc(){
+    const f = lerPF(true), err = document.getElementById('modalErr');
+    if (f.erro) { if (err) err.textContent = f.erro; return; }
+    const p = { id: novoIdP('pc'), nome: f.nome, emp: f.emp, cat: f.cat, sub: f.sub, valorParcela: f.valor, qtd: f.qtd, valorTotal: f.total, pagasAntes: f.pagasAntes, log: [] };
+    let r;
+    act('Parcelamento ' + p.nome + ' criado: ' + (p.qtd - p.pagasAntes) + ' parcelas de ' + money(p.valorParcela) + ' em Contas a pagar.', () => {
+      logP(p, 'Criado com ' + p.qtd + ' parcelas de ' + money(p.valorParcela) + (p.pagasAntes ? ' (' + p.pagasAntes + ' já pagas antes)' : '') + ', próxima em ' + dmy(f.primeiro));
+      if (f.obs) logP(p, 'Obs: ' + f.obs);
+      (S.parcelamentos = S.parcelamentos || []).push(p);
+      r = gerarParcelas(p, f.primeiro, p.pagasAntes + 1);
+      if (r.ligadas) logP(p, r.ligadas + ' parcela(s) que já estavam em Contas a pagar foram ligadas a este parcelamento');
+    });
+    view.modal = null; render();
+    if (r && r.ligadas) toast(r.ligadas + ' parcela(s) já estavam em Contas a pagar e foram ligadas; ' + r.criadas + ' nova(s) criada(s).', true);
+  }
+  function salvarParc(p){
+    const f = lerPF(false), err = document.getElementById('modalErr');
+    if (f.erro) { if (err) err.textContent = f.erro; return; }
+    const info = parcInfo(p), maxPaga = info.cs.filter((c) => c.pago).reduce((a, c) => Math.max(a, c.parcN || 0), p.pagasAntes || 0);
+    if (f.qtd < maxPaga) { if (err) err.textContent = 'Já existe parcela paga de número ' + maxPaga + '. A quantidade não pode ser menor.'; return; }
+    // valor total que era só parcela × quantidade acompanha a mudança, se a pessoa não mexeu nele
+    if (Math.abs(f.total - p.valorTotal) < 0.01 && Math.abs(p.valorTotal - p.valorParcela * p.qtd) < 0.01) f.total = Math.round(f.valor * f.qtd * 100) / 100;
+    const mud = [];
+    if (f.nome !== p.nome) mud.push('nome');
+    if (f.emp !== p.emp) mud.push('empresa');
+    if (f.cat !== p.cat || f.sub !== p.sub) mud.push('categoria');
+    if (f.valor !== p.valorParcela) mud.push('valor da parcela de ' + money(p.valorParcela) + ' para ' + money(f.valor));
+    if (f.qtd !== p.qtd) mud.push('parcelas de ' + p.qtd + ' para ' + f.qtd);
+    if (f.total !== p.valorTotal) mud.push('valor total para ' + money(f.total));
+    if (!mud.length && !f.obs) { view.modal = null; render(); return; }
+    act(mud.length ? 'Parcelamento ' + f.nome + ' alterado: ' + mud.join(', ') + '.' : 'Observação no parcelamento ' + p.nome + '.', () => {
+      const valorMudou = f.valor !== p.valorParcela, qtdAntes = p.qtd;
+      Object.assign(p, { nome: f.nome, emp: f.emp, cat: f.cat, sub: f.sub, valorParcela: f.valor, qtd: f.qtd, valorTotal: f.total });
+      if (mud.length) logP(p, 'Alterado: ' + mud.join(', '));
+      if (f.obs) logP(p, 'Obs: ' + f.obs);
+      // parcelas em aberto acompanham o parcelamento; as pagas ficam como foram pagas
+      parcContas(p).filter((c) => !c.pago).forEach((c) => {
+        if (c.parcN > p.qtd) { S.contas = S.contas.filter((x) => x.id !== c.id); return; }
+        const forn = parcForn(p, c.parcN);
+        if (c.forn !== forn && /· \d+\/\d+$/.test(c.forn)) c.forn = forn;
+        c.cat = p.cat; c.sub = p.sub;
+        if (valorMudou && c.valor !== p.valorParcela) { logC(c, 'Valor mudou de ' + money(c.valor) + ' para ' + money(p.valorParcela) + ' (parcelamento alterado)'); c.valor = p.valorParcela; }
+      });
+      if (p.qtd > qtdAntes) {
+        const ult = parcContas(p).reduce((a, c) => (c.data > a ? c.data : a), '') || HOJE;
+        gerarParcelas(p, addMes(ult, 1), qtdAntes + 1);
+      }
+    });
+    view.modal = null; render();
+  }
+  function excluirParc(p){
+    const info = parcInfo(p);
+    act('Parcelamento ' + p.nome + ' excluído. ' + info.abertas.length + ' parcela(s) em aberto saíram de Contas a pagar.', () => {
+      const abertas = new Set(info.abertas.map((c) => c.id));
+      S.contas = S.contas.filter((c) => !abertas.has(c.id));
+      S.contas.forEach((c) => { if (c.parcId === p.id) { delete c.parcId; delete c.parcN; } });
+      S.parcelamentos = S.parcelamentos.filter((x) => x.id !== p.id);
+    });
+    view.modal = null; render();
+  }
+  // Carga inicial (admin, só com Parcelamentos e Cheques vazios): arquivo .json com
+  // { parcelamentos: [[nome, empresa, categoria, subcategoria, parcela, quantidade, já pagas, próximo vencimento?]], cheques: [[data, nº, descrição, valor, a pagar no ano, grupo]] }
+  function importarParc(j){
+    const P = Array.isArray(j.parcelamentos) ? j.parcelamentos : [], Q = Array.isArray(j.cheques) ? j.cheques : [];
+    if (!P.length && !Q.length) { toast('O arquivo não tem parcelamentos nem cheques.', false); return; }
+    let ligadas = 0, criadas = 0;
+    act('Carga inicial: ' + P.length + ' parcelamentos e ' + Q.length + ' cheques.', () => {
+      S.parcelamentos = S.parcelamentos || [];
+      P.forEach(([nome, emp, cat, sub, valor, qtd, pagas, prox]) => {
+        valor = +valor; qtd = +qtd; pagas = +pagas || 0;
+        if (!nome || !(valor > 0) || !(qtd >= 1)) return;
+        const p = { id: novoIdP('pc'), nome, emp: emp || 'MRBL', cat: cat || '', sub: sub || '', valorParcela: valor, qtd, valorTotal: Math.round(valor * qtd * 100) / 100, pagasAntes: pagas, log: [] };
+        // próxima parcela: a primeira conta parecida a partir de meados de outubro; senão a data do arquivo; senão dia 10 do mês que vem
+        const cand = S.contas.filter((c) => !c.parcId && c.sub === p.sub && c.data >= '2026-10-15' && Math.abs(c.valor - valor) / valor <= 0.12).sort((a, b) => a.data.localeCompare(b.data))[0];
+        const primeiro = cand ? cand.data : prox || addMes(HOJE.slice(0, 8) + '10', 1);
+        logP(p, 'Cadastrado a partir da planilha PARCELAMENTOS E FINANCIAMENTOS (' + qtd + ' parcelas de ' + money(valor) + ', ' + pagas + ' já pagas)' + (cand || prox ? '' : '. Vencimento estimado: confira'));
+        S.parcelamentos.push(p);
+        if (pagas < qtd) { const r = gerarParcelas(p, primeiro, pagas + 1); ligadas += r.ligadas; criadas += r.criadas; if (r.ligadas) logP(p, r.ligadas + ' parcela(s) que já estavam em Contas a pagar foram ligadas a este parcelamento'); }
+      });
+      S.cheques = S.cheques || [];
+      Q.forEach(([data, numero, desc, valor, aPagar, grupo]) => {
+        if (!data || !desc || !(+valor > 0)) return;
+        const [cat, sub] = chqCatDe(desc);
+        const q = { id: novoIdP('cq'), data, numero: String(numero || ''), desc, valor: +valor, aPagar: +aPagar || 0, grupo: grupo || 'Outros', cat, sub, contaId: null, log: [] };
+        logQ(q, 'Cadastrado a partir da planilha PARCELAMENTOS E FINANCIAMENTOS');
+        S.cheques.push(q);
+      });
+    });
+    render();
+    toast('Carga feita: ' + criadas + ' parcela(s) novas em Contas a pagar e ' + ligadas + ' ligada(s) a contas que já existiam.', true);
+  }
+  document.addEventListener('change', (e) => {
+    if (e.target.id !== 'parcImp' || !e.target.files || !e.target.files[0]) return;
+    e.target.files[0].text().then((t) => importarParc(JSON.parse(t))).catch((err) => toast('Não consegui ler o arquivo: ' + err.message, false));
+  });
+
+  function renderParc(){
+    const app = document.getElementById('app');
+    if (!view.parcEmp) view.parcEmp = 'todas';
+    if (!view.parcSit) view.parcSit = 'ativos';
+    const todos = (S.parcelamentos || []).map((p) => ({ p, i: parcInfo(p) }));
+    const vis = todos.filter((x) => (view.parcEmp === 'todas' || x.p.emp === view.parcEmp) && (view.parcSit === 'todos' || (view.parcSit === 'ativos' ? !x.i.quitado : x.i.quitado)));
+    const ativos = todos.filter((x) => !x.i.quitado && (view.parcEmp === 'todas' || x.p.emp === view.parcEmp));
+    const saldo = ativos.reduce((a, x) => a + x.i.saldo, 0);
+    const doMes = ativos.flatMap((x) => x.i.cs).filter((c) => c.data.slice(0, 7) === CUR);
+    const mesTot = doMes.reduce((a, c) => a + c.valor, 0), mesPago = doMes.filter((c) => c.pago).reduce((a, c) => a + c.valor, 0);
+    const venc = ativos.flatMap((x) => x.i.venc), vencTot = venc.reduce((a, c) => a + c.valor, 0);
+    const chip = (k, v, lab) => '<button type="button" class="chipf" data-pf="' + k + ':' + v + '" aria-pressed="' + (view[k] === v) + '">' + lab + '</button>';
+    let h = '<div class="today"><h1>Parcelamentos</h1><span class="sub">Tudo que se paga em parcelas mensais. Cada parcela já está em Contas a pagar; quando ela é paga lá, sai do saldo aqui.</span></div>';
+    h += '<div class="kpis">' +
+      '<div class="kpi"><span>Saldo a pagar</span><b class="num">' + money(saldo) + '</b><small>' + ativos.length + ' parcelamento' + (ativos.length === 1 ? '' : 's') + ' em andamento</small></div>' +
+      '<div class="kpi g"><span>Parcelas de ' + mesNome(CUR) + '</span><b class="num">' + money(mesTot) + '</b><small>' + money(mesPago) + ' já pago · ' + doMes.filter((c) => c.pago).length + ' de ' + doMes.length + '</small></div>' +
+      '<div class="kpi' + (venc.length ? ' kd' : '') + '"><span>Parcelas vencidas</span><b class="num">' + money(vencTot) + '</b><small>' + (venc.length ? venc.length + ' parcela' + (venc.length === 1 ? '' : 's') + ' sem pagamento' : 'Nenhuma vencida') + '</small></div>' +
+      (() => { const ab = (S.cheques || []).filter((q) => ['aberto', 'enviado'].includes(chqSit(q).k)), tot = ab.reduce((x, q) => x + chqValor(q), 0), fora = ab.filter((q) => chqSit(q).k === 'aberto').length;
+        return '<div class="kpi"><span>Cheques em aberto</span><b class="num">' + money(tot) + '</b><small>' + ab.length + ' cheque' + (ab.length === 1 ? '' : 's') + (fora ? ' · ' + fora + ' fora de Contas a pagar' : '') + '</small></div></div>'; })();
+    h += '<section class="panel"><div class="ph"><h2>Parcelamentos</h2><div class="pfil">' +
+      chip('parcEmp', 'todas', 'Todas') + EMPS_P.map((e) => chip('parcEmp', e, e)).join('') + '<span class="sep"></span>' +
+      chip('parcSit', 'ativos', 'Em andamento') + chip('parcSit', 'quitados', 'Quitados') + chip('parcSit', 'todos', 'Todos') + '</div></div>';
+    if (!vis.length) h += '<p class="pempty">' + (todos.length ? 'Nenhum parcelamento neste filtro.' : 'Nenhum parcelamento ainda. Use + Novo parcelamento.') + '</p>' + (!todos.length && !(S.cheques || []).length && ADMIN ? '<p class="pempty"><label class="btn sm">Carga inicial (.json)<input type="file" id="parcImp" accept=".json,application/json" hidden></label></p>' : '');
+    else {
+      h += '<div class="pscroll"><table class="ptab"><thead><tr><th>Parcelamento</th><th class="r">Parcela</th><th>Pagas</th><th class="r">Saldo</th><th>Próxima</th><th>Termina</th><th class="r"></th></tr></thead><tbody>';
+      EMPS_P.forEach((emp) => {
+        const g = vis.filter((x) => (x.p.emp || 'MRBL') === emp).sort((a, b) => b.i.saldo - a.i.saldo);
+        if (!g.length) return;
+        h += '<tr class="pgh"><td colspan="3">' + emp + '</td><td class="r num">' + money(g.reduce((a, x) => a + x.i.saldo, 0)) + '</td><td colspan="3"><small>' + money(g.filter((x) => !x.i.quitado).reduce((a, x) => a + x.p.valorParcela, 0)) + ' por mês em parcelas</small></td></tr>';
+        g.forEach(({ p, i }) => {
+          const pct = Math.min(100, Math.round(i.pagas / p.qtd * 100));
+          const prox = i.prox ? '<span class="num">' + dmy(i.prox.data) + '</span>' + (i.prox.data < HOJE ? ' <span class="chip c-late">Vencida</span>' : '') + (i.venc.length > 1 ? '<small> +' + (i.venc.length - 1) + ' vencida' + (i.venc.length > 2 ? 's' : '') + '</small>' : '') + '<small>parcela ' + i.prox.parcN + '/' + p.qtd + (Math.abs(i.prox.valor - p.valorParcela) > 0.009 ? ' · ' + money(i.prox.valor) : '') + '</small>' : '<span class="chip c-paid">✓ Quitado</span>';
+          h += '<tr data-pid="' + p.id + '"><td><b>' + esc(p.nome) + '</b>' + '<small>' + esc(p.cat || 'Sem categoria') + (p.sub ? ' · ' + esc(p.sub) : '') + '</small></td>' +
+            '<td class="r num">' + money(p.valorParcela) + '</td>' +
+            '<td><div class="pbar" role="img" aria-label="' + i.pagas + ' de ' + p.qtd + ' parcelas pagas"><i style="width:' + pct + '%"></i></div><small class="num">' + i.pagas + ' de ' + p.qtd + '</small></td>' +
+            '<td class="r num"><b>' + money(i.saldo) + '</b><small>de ' + money(p.valorTotal || p.valorParcela * p.qtd) + '</small></td>' +
+            '<td>' + prox + '</td>' +
+            '<td class="num">' + (i.fim ? cap(MES3[+i.fim.slice(5, 7) - 1]) + '/' + i.fim.slice(2, 4) : '—') + '</td>' +
+            '<td class="r">' + (i.prox ? '<button type="button" class="btn sm pri" data-gopay="' + i.prox.id + '">Pagar</button>' : '') + '</td></tr>';
+        });
+      });
+      h += '</tbody></table></div>';
+    }
+    h += '</section>';
+    // Quanto falta por ano (como na planilha de parcelamentos)
+    const anos = [...new Set(ativos.flatMap((x) => x.i.abertas.map((c) => c.data.slice(0, 4))))].sort();
+    if (anos.length) {
+      const porAno = (cs) => anos.map((a) => cs.filter((c) => c.data.slice(0, 4) === a).reduce((s, c) => s + c.valor, 0));
+      // valores em milhares de reais (57,4 = R$ 57,4 mil) para os anos caberem na largura da tela; o valor exato fica no title
+      const mil = (v) => (v / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      const cel = (v) => '<td class="r num"' + (v ? ' title="' + money(v) + '">' + mil(v) : '><span class="z">—</span>') + '</td>';
+      h += '<section class="panel"><div class="ph"><h2>Quanto falta pagar por ano</h2><span style="color:var(--muted);font-size:14px">Em R$ mil: soma das parcelas em aberto em Contas a pagar. Passe o mouse no valor para ver o exato.</span></div><div class="pscroll"><table class="ptab pano"><colgroup><col class="pn">' + anos.map(() => '<col>').join('') + '<col class="pt"></colgroup><thead><tr><th>Parcelamento</th>' + anos.map((a) => '<th class="r">' + a + '</th>').join('') + '<th class="r">Total</th></tr></thead><tbody>';
+      let geral = anos.map(() => 0);
+      EMPS_P.forEach((emp) => {
+        const g = ativos.filter((x) => (x.p.emp || 'MRBL') === emp);
+        if (!g.length) return;
+        const sub = anos.map(() => 0);
+        g.forEach(({ p, i }) => { const v = porAno(i.abertas); v.forEach((x, k) => { sub[k] += x; }); h += '<tr data-pid="' + p.id + '"><td>' + esc(p.nome) + '</td>' + v.map(cel).join('') + cel(i.saldo) + '</tr>'; });
+        geral = geral.map((x, k) => x + sub[k]);
+        h += '<tr class="pst"><td>Total ' + emp + '</td>' + sub.map(cel).join('') + cel(sub.reduce((a, b) => a + b, 0)) + '</tr>';
+      });
+      h += '<tr class="pst ptotg"><td>Total geral</td>' + geral.map(cel).join('') + cel(geral.reduce((a, b) => a + b, 0)) + '</tr></tbody></table></div></section>';
+    }
+    h += chequesHTML();
+    app.innerHTML = h;
+  }
+
+  function parcModalHTML(){
+    const fld = (lab, ctl) => '<label class="ff"><span>' + lab + '</span>' + ctl + '</label>';
+    const xBtn = '<button type="button" class="mx" data-modal-close aria-label="Fechar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+    const f = view.pf, novo = view.modal === 'parcnew';
+    const campos = fld('Nome', '<input id="pcNome" value="' + esc(f.nome) + '" placeholder="Ex.: ICMS parcelamento 36x" autocomplete="off">') +
+      fld('Empresa', '<select id="pcEmp">' + EMPS_P.map((e) => '<option' + (e === f.emp ? ' selected' : '') + '>' + e + '</option>').join('') + '</select>') +
+      fld('Categoria', '<select id="pcCat">' + catOpts(f.cat) + '</select>') +
+      fld('Subcategoria', '<select id="pcSub">' + subOpts(f.cat, f.sub) + '</select>') +
+      fld('Valor da parcela', '<input id="pcVal" class="val" value="' + esc(f.valor) + '" inputmode="decimal" placeholder="0,00">') +
+      fld('Quantidade de parcelas', '<input id="pcQtd" class="val" value="' + esc(f.qtd) + '" inputmode="numeric" placeholder="Ex.: 36">') +
+      fld('Valor total', '<input id="pcTot" class="val" value="' + esc(f.total) + '" inputmode="decimal" placeholder="parcela × quantidade">') +
+      (novo ? fld('Parcelas já pagas', '<input id="pcPagas" class="val" value="' + esc(f.pagasAntes) + '" inputmode="numeric">') +
+        fld('Vencimento da próxima parcela', '<input type="date" id="pcPrim" value="' + esc(f.primeiro) + '">') : '') +
+      fld('Observação', '<textarea id="pcObs" rows="3" placeholder="Escreva uma observação. Ao salvar, ela entra na linha do tempo com seu nome.">' + esc(f.obs || '') + '</textarea>') +
+      '<p class="enote" id="pcResumo">' + resumoPF() + '</p>';
+    if (novo) {
+      return '<div class="modal-bg" data-modal-bg><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt" style="width:min(680px,100%)"><div class="mh"><h2 id="mt">Novo parcelamento</h2>' + xBtn + '</div><div class="ebody"><div class="fbody">' + campos + '</div></div>' +
+        '<div class="efoot"><span id="modalErr" class="err" role="alert"></span><div class="fact"><span class="grow"></span><button type="button" class="btn y" id="pcAdd">Criar parcelas</button></div></div></div></div>';
+    }
+    const p = pById(view.pid); if (!p) { view.modal = null; return ''; }
+    const i = parcInfo(p);
+    const st = i.quitado ? '<span class="chip c-paid">✓ Quitado</span>' : i.venc.length ? '<span class="chip c-late">' + i.venc.length + ' vencida' + (i.venc.length > 1 ? 's' : '') + '</span>' : '';
+    const linhas = [];
+    const pa = p.pagasAntes || 0;
+    if (pa) linhas.push('<li class="pq old"><span class="n num">' + (pa > 1 ? '1–' + pa : '1') + '</span><span class="d">antes do sistema</span><span class="v num">' + num(pa * p.valorParcela) + '</span><span class="s"><span class="chip c-paid">' + (pa > 1 ? pa + ' pagas' : 'Paga') + '</span></span><span class="a"></span></li>');
+    i.cs.forEach((c) => linhas.push('<li class="pq' + (c.pago ? ' ok' : c.data < HOJE ? ' late' : '') + '"><span class="n num">' + (c.parcN || '?') + '</span><span class="d num">' + dmy(c.data) + (c.orig && c.orig !== c.data ? '<small>venc. ' + dm(c.orig) + '</small>' : '') + '</span><span class="v num">' + num(c.valor) + '</span><span class="s">' +
+      (c.pago ? '<span class="chip c-paid">Paga ' + dm(c.pagoEm || c.data) + '</span>' : c.data < HOJE ? '<span class="chip c-late">Vencida</span>' : '<span class="chip">A pagar</span>') +
+      '</span><span class="a"><button type="button" class="lnk" data-gopay="' + c.id + '" title="Ver em Contas a pagar">Ver ›</button></span></li>'));
+    const tl = '<ol class="tl">' + (p.log || []).slice().reverse().map((x, k, arr) => '<li class="' + (/^Obs: /.test(x.txt) ? 'n' : /^Criado|^Cadastrado/.test(x.txt) ? 'o' : 'e') + (k === arr.length - 1 ? ' last' : '') + '">' + (/^Obs: /.test(x.txt) ? '<span class="tln">' + esc(x.txt.slice(5)) + '</span>' : '<b>' + esc(x.txt) + '</b>') + '<small>' + quando(x.em) + (x.por ? ' por <span class="who">' + esc(x.por) + '</span>' : '') + '</small></li>').join('') + '</ol>';
+    const tab = (k, lab) => '<button type="button" class="ptb" data-ptab="' + k + '" aria-pressed="' + (view.pTab === k) + '">' + lab + '</button>';
+    return '<div class="modal-bg" data-modal-bg><div class="modal wide xwide" role="dialog" aria-modal="true" aria-labelledby="mt"><div class="mh"><h2 id="mt">' + esc(p.nome) + '</h2>' + st + xBtn + '</div><div class="ebody"><div class="egrid"><div class="fbody">' + campos +
+      '<div class="paylink"><div><span>Pagas</span><b class="num">' + i.pagas + ' de ' + p.qtd + '</b><small>' + money(i.pago) + '</small></div><div><span>Saldo</span><b class="num">' + money(i.saldo) + '</b><small>' + i.abertas.length + ' em aberto</small></div></div>' +
+      '</div><div class="tlbox"><div class="ptabs">' + tab('parcelas', 'Parcelas') + tab('tl', 'Linha do tempo') + '</div><div class="tlscroll">' + (view.pTab === 'tl' ? tl : '<ol class="plist">' + linhas.join('') + '</ol>') + '</div>' +
+      (i.prox ? '<button type="button" class="btn pri big" data-gopay="' + i.prox.id + '">Pagar parcela ' + i.prox.parcN + '/' + p.qtd + ' · ' + dm(i.prox.data) + '</button>' : '') + '</div></div></div>' +
+      '<div class="efoot"><span id="modalErr" class="err" role="alert"></span><div class="fact">' +
+      (view.pcDel ? '<span style="font-size:13px;color:var(--danger-ink)">Excluir de vez? As ' + i.abertas.length + ' parcelas em aberto saem de Contas a pagar; as pagas ficam.</span><button type="button" class="btn del" id="pcDelOk">Sim, excluir</button><button type="button" class="btn" id="pcDelNo">Não</button>' : '<button type="button" class="btn del ghost" id="pcDel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>Excluir</button>') +
+      '<span class="grow"></span><button type="button" class="btn y" id="pcSave">Salvar</button></div></div></div></div>';
+  }
+  // Frase de conferência embaixo do formulário: parcela × quantidade e o que vai para Contas a pagar.
+  function resumoPF(){
+    const f = view.pf || {}, v = parseVal(f.valor), q = parseInt(f.qtd, 10), t = parseVal(f.total);
+    if (!(v > 0) || !(q >= 1)) return 'Preencha o valor da parcela e a quantidade.';
+    const conta = Math.round(v * q * 100) / 100;
+    let s = q + ' × ' + money(v) + ' = ' + money(conta) + '.';
+    if (t > 0 && Math.abs(t - conta) > 0.009) s += ' O valor total informado é ' + money(t) + ' (' + (t > conta ? 'mais ' : 'menos ') + money(Math.abs(t - conta)) + ').';
+    if (view.modal === 'parcnew') { const pg = parseInt(f.pagasAntes || '0', 10) || 0; if (q - pg > 0 && f.primeiro) s += ' Vão para Contas a pagar ' + (q - pg) + ' parcelas, de ' + dmy(f.primeiro) + ' a ' + dmy(addMes(f.primeiro, q - pg - 1)) + '.'; }
+    return s;
+  }
+  // Mantém view.pf igual ao formulário enquanto a pessoa digita (o render redesenha o modal).
+  document.addEventListener('input', (e) => {
+    if (!/^(parcnew|parcedit)$/.test(view.modal || '') || !view.pf) return;
+    const map = { pcNome: 'nome', pcVal: 'valor', pcQtd: 'qtd', pcTot: 'total', pcPagas: 'pagasAntes', pcObs: 'obs' };
+    if (map[e.target.id]) { view.pf[map[e.target.id]] = e.target.value; const r = document.getElementById('pcResumo'); if (r) r.textContent = resumoPF(); }
+  });
+  document.addEventListener('change', (e) => {
+    if (!/^(parcnew|parcedit)$/.test(view.modal || '') || !view.pf) return;
+    const id = e.target.id;
+    if (id === 'pcEmp') view.pf.emp = e.target.value;
+    if (id === 'pcSub') view.pf.sub = e.target.value;
+    if (id === 'pcPrim') { view.pf.primeiro = e.target.value; const r = document.getElementById('pcResumo'); if (r) r.textContent = resumoPF(); }
+    if (id === 'pcCat') { view.pf.cat = e.target.value; view.pf.sub = (LISTAS[view.pf.cat] || [])[0] || ''; render(); }
+  });
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    const pf = t.closest('[data-pf]'); if (pf) { const [k, v] = pf.dataset.pf.split(':'); view[k] = v; render(); return; }
+    const pt = t.closest('[data-ptab]'); if (pt) { view.pTab = pt.dataset.ptab; render(); return; }
+    const gp = t.closest('[data-goparc]'); if (gp) { const p = pById(gp.dataset.goparc); if (p) { view.tela = 'parc'; openParc(p); } return; }
+    if (t.closest('button, a, input, select, textarea, label')) {
+      if (t.id === 'pcAdd') salvarNovoParc();
+      else if (t.id === 'pcSave') { const p = pById(view.pid); if (p) salvarParc(p); }
+      else if (t.id === 'pcDel') { view.pcDel = true; render(); }
+      else if (t.id === 'pcDelNo') { view.pcDel = false; render(); }
+      else if (t.id === 'pcDelOk') { const p = pById(view.pid); if (p) excluirParc(p); }
+      return;
+    }
+    const row = t.closest('#app tr[data-pid]'); if (row) { const p = pById(row.dataset.pid); if (p) openParc(p); }
+  });
+
+  // ---------- cheques (parte de baixo da tela de Parcelamentos) ----------
+  // A tabela segue a planilha: data, nº do cheque, descrição, valor total a pagar e quanto falta em 2026.
+  // "Enviar para Contas a pagar" pede a data e cria a conta nesse dia; dali em diante ela é paga em Contas a pagar.
+  const qById = (id) => (S.cheques || []).find((q) => q.id === id);
+  const chqCatDe = (desc) => /ICMS/i.test(desc) ? ['DESPESAS TRIBUTARIAS FEDERAIS', 'ICMS'] : /GPS|INSS/i.test(desc) ? ['ENCARGOS SOCIAIS', 'INSS / GPS'] : ['', ''];
+  function chqSit(q){
+    const c = q.contaId ? byId(q.contaId) : null;
+    if (c) return c.pago ? { k: 'pago', c } : { k: 'enviado', c };
+    return { k: 'aberto' };   // a coluna do ano zerada não quer dizer que compensou: só sai daqui pago em Contas a pagar
+  }
+  const chqValorBase = (q) => (q.aPagar > 0 ? q.aPagar : q.valor);
+  const chqValor = (q) => { const s = chqSit(q); return s.c ? s.c.valor : chqValorBase(q); };
+  function logQ(q, txt){ (q.log = q.log || []).push({ txt, em: agora(), por: S.user }); }
+  function ensureCheques(){
+    if (S.cheques) return;
+    S.cheques = CHQ_SEED.map(([data, numero, desc, valor, aPagar, grupo], i) => { const [cat, sub] = chqCatDe(desc); return { id: 'cq' + (i + 1), data, numero, desc, valor, aPagar, grupo, cat, sub, contaId: null, log: [{ txt: 'Cadastrado a partir da planilha PARCELAMENTOS E FINANCIAMENTOS', em: agora(), por: 'Planilha' }] }; });
+  }
+  function enviarCheque(q, anchor){
+    const sit = chqSit(q); if (sit.k !== 'aberto') return;
+    openCal(anchor, { commit: true, value: q.data >= HOJE ? q.data : HOJE, onPick: (d) => act('Cheque ' + (q.numero ? 'nº ' + q.numero + ' ' : '') + '(' + q.desc + ') enviado para Contas a pagar em ' + dm(d) + '.', () => {
+      const c = C(d, 'Cheque ' + (q.numero ? 'nº ' + q.numero + ' · ' : '') + q.desc, q.cat, q.sub, chqValorBase(q), { id: novoIdP('c'), hist: [], chqId: q.id });
+      logC(c, 'Criada a partir do cheque ' + (q.numero ? 'nº ' + q.numero : '') + ' (Parcelamentos › Cheques)');
+      S.contas.push(c); q.contaId = c.id; logQ(q, 'Enviado para Contas a pagar em ' + dmy(d));
+    }) });
+  }
+  function chequesHTML(){
+    const L = S.cheques || [];
+    let h = '<section class="panel" id="chqSec"><div class="ph"><h2>Cheques</h2><span style="color:var(--muted);font-size:14px;flex:1">Cheques emitidos. Envie para Contas a pagar escolhendo o dia em que ele vai compensar; quando for pago lá, aparece como pago aqui.</span><button type="button" class="btn sm y" id="cqNew">+ Novo cheque</button></div>';
+    if (!L.length) return h + '<p class="pempty">Nenhum cheque cadastrado.</p></section>';
+    h += '<div class="pscroll"><table class="ptab pchq"><thead><tr><th>Data</th><th>Cheque</th><th>Descrição</th><th class="r">Valor total a pagar</th><th class="r">' + HOJE.slice(0, 4) + '</th><th>Situação</th></tr></thead><tbody>';
+    const grupos = [...new Set(L.map((q) => q.grupo || 'Outros'))];
+    let tv = 0, ta = 0;
+    grupos.forEach((g) => {
+      const gs = L.filter((q) => (q.grupo || 'Outros') === g);
+      gs.forEach((q) => {
+        const s = chqSit(q);
+        const sit = s.k === 'aberto' ? '<button type="button" class="btn sm pri" data-chqenv="' + q.id + '">Enviar para Contas a pagar</button>'
+          : s.k === 'enviado' ? '<span class="chip c-sent">Em Contas a pagar · ' + dm(s.c.data) + '</span> <button type="button" class="lnk" data-gopay="' + s.c.id + '">Ver ›</button>'
+          : s.k === 'pago' ? '<span class="chip c-paid">✓ Pago ' + dm(s.c.pagoEm || s.c.data) + '</span> <button type="button" class="lnk" data-gopay="' + s.c.id + '">Ver ›</button>'
+          : '<span class="chip c-paid">✓ Compensado</span>';
+        h += '<tr data-qid="' + q.id + '"><td class="num">' + dmy(q.data) + '</td><td class="num">' + esc(q.numero || '—') + '</td><td>' + esc(q.desc) + '</td><td class="r num">' + num(q.valor) + '</td><td class="r num">' + (q.aPagar ? num(q.aPagar) : '<span class="z">0,00</span>') + '</td><td>' + sit + '</td></tr>';
+      });
+      const sv = gs.reduce((a, q) => a + q.valor, 0), sa = gs.reduce((a, q) => a + (q.aPagar || 0), 0); tv += sv; ta += sa;
+      h += '<tr class="pst"><td colspan="3">' + esc(g) + '</td><td class="r num">' + num(sv) + '</td><td class="r num">' + num(sa) + '</td><td></td></tr>';
+    });
+    return h + '<tr class="pst ptotg"><td colspan="3">Total de cheques</td><td class="r num">' + num(tv) + '</td><td class="r num">' + num(ta) + '</td><td></td></tr></tbody></table></div></section>';
+  }
+  function chqModalHTML(){
+    const fld = (lab, ctl) => '<label class="ff"><span>' + lab + '</span>' + ctl + '</label>';
+    const f = view.qf, novo = view.modal === 'chqnew', q = novo ? null : qById(view.qid);
+    if (!novo && !q) { view.modal = null; return ''; }
+    const s = q ? chqSit(q) : { k: 'aberto' };
+    const grupos = [...new Set((S.cheques || []).map((x) => x.grupo).filter(Boolean))];
+    const tl = q ? '<ol class="tl">' + (q.log || []).slice().reverse().map((x, k, arr) => '<li class="' + (/^Obs: /.test(x.txt) ? 'n' : /^Enviado/.test(x.txt) ? 'g' : 'e') + (k === arr.length - 1 ? ' last' : '') + '">' + (/^Obs: /.test(x.txt) ? '<span class="tln">' + esc(x.txt.slice(5)) + '</span>' : '<b>' + esc(x.txt) + '</b>') + '<small>' + quando(x.em) + (x.por ? ' por <span class="who">' + esc(x.por) + '</span>' : '') + '</small></li>').join('') + '</ol>' : '';
+    const campos = fld('Data', '<input type="date" id="cqData" value="' + esc(f.data) + '">') +
+      fld('Cheque nº', '<input id="cqNum" value="' + esc(f.numero) + '" inputmode="numeric" autocomplete="off">') +
+      fld('Descrição', '<input id="cqDesc" value="' + esc(f.desc) + '" placeholder="Ex.: ICMS, GPS FEVEREIRO" autocomplete="off">') +
+      fld('Categoria', '<select id="cqCat">' + catOpts(f.cat) + '</select>') +
+      fld('Subcategoria', '<select id="cqSub">' + subOpts(f.cat, f.sub) + '</select>') +
+      fld('Valor total a pagar', '<input id="cqVal" class="val" value="' + esc(f.valor) + '" inputmode="decimal">') +
+      fld('A pagar em ' + HOJE.slice(0, 4), '<input id="cqAp" class="val" value="' + esc(f.aPagar) + '" inputmode="decimal" placeholder="0,00">') +
+      fld('Grupo', '<input id="cqGrp" data-cbx="cqGrpList" data-novo="1" value="' + esc(f.grupo) + '" autocomplete="off"><datalist id="cqGrpList">' + grupos.map((g) => '<option value="' + esc(g) + '">').join('') + '</datalist>') +
+      fld('Observação', '<textarea id="cqObs" rows="3" placeholder="Escreva uma observação. Ao salvar, ela entra na linha do tempo com seu nome.">' + esc(f.obs || '') + '</textarea>') +
+      (s.c ? '<p class="enote">Este cheque está em Contas a pagar em ' + dmy(s.c.data) + (s.c.pago ? ', pago em ' + dmy(s.c.pagoEm || s.c.data) : '') + '. Mudanças aqui não alteram a conta. <button type="button" class="lnk" data-gopay="' + s.c.id + '">Ver em Contas a pagar ›</button></p>' : '');
+    const xBtn = '<button type="button" class="mx" data-modal-close aria-label="Fechar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+    return '<div class="modal-bg" data-modal-bg><div class="modal' + (novo ? '' : ' wide') + '" role="dialog" aria-modal="true" aria-labelledby="mt"' + (novo ? ' style="width:min(620px,100%)"' : '') + '><div class="mh"><h2 id="mt">' + (novo ? 'Novo cheque' : 'Cheque ' + esc(q.numero ? 'nº ' + q.numero : '') + ' · ' + esc(q.desc)) + '</h2>' + xBtn + '</div><div class="ebody">' +
+      (novo ? '<div class="fbody">' + campos + '</div>' : '<div class="egrid"><div class="fbody">' + campos + '</div><div class="tlbox"><h3>Linha do tempo</h3><div class="tlscroll">' + tl + '</div>' + (s.k === 'aberto' ? '<button type="button" class="btn pri big" data-chqenv="' + q.id + '">Enviar para Contas a pagar</button>' : '') + '</div></div>') + '</div>' +
+      '<div class="efoot"><span id="modalErr" class="err" role="alert"></span><div class="fact">' +
+      (novo ? '' : view.cqDel ? '<span style="font-size:13px;color:var(--danger-ink)">Excluir de vez?' + (s.k === 'enviado' ? ' A conta em Contas a pagar também sai.' : '') + '</span><button type="button" class="btn del" id="cqDelOk">Sim, excluir</button><button type="button" class="btn" id="cqDelNo">Não</button>' : '<button type="button" class="btn del ghost" id="cqDel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>Excluir</button>') +
+      '<span class="grow"></span><button type="button" class="btn y" id="cqSave">' + (novo ? 'Adicionar' : 'Salvar') + '</button></div></div></div></div>';
+  }
+  function lerQF(){
+    const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+    return { data: g('cqData'), numero: g('cqNum').trim(), desc: g('cqDesc').trim(), cat: g('cqCat'), sub: g('cqSub'), valor: g('cqVal'), aPagar: g('cqAp'), grupo: g('cqGrp').trim(), obs: g('cqObs').trim() };
+  }
+  function salvarCheque(){
+    const f = lerQF(), err = document.getElementById('modalErr'), v = parseVal(f.valor), ap = f.aPagar === '' ? 0 : parseVal(f.aPagar);
+    if (!f.data) { err.textContent = 'Escolha a data do cheque.'; return; }
+    if (!f.desc) { err.textContent = 'Escreva a descrição.'; return; }
+    if (!(v > 0)) { err.textContent = 'Informe o valor do cheque.'; return; }
+    if (isNaN(ap) || ap < 0) { err.textContent = 'O valor a pagar não está certo.'; return; }
+    const dados = { data: f.data, numero: f.numero, desc: f.desc, cat: f.cat, sub: f.sub, valor: v, aPagar: ap, grupo: f.grupo || 'Outros' };
+    if (view.modal === 'chqnew') {
+      act('Cheque ' + (f.numero ? 'nº ' + f.numero + ' ' : '') + '(' + f.desc + ') cadastrado.', () => { const q = Object.assign({ id: novoIdP('cq'), contaId: null, log: [] }, dados); logQ(q, 'Cadastrado'); if (f.obs) logQ(q, 'Obs: ' + f.obs); (S.cheques = S.cheques || []).push(q); });
+    } else {
+      const q = qById(view.qid); if (!q) return;
+      const mud = Object.keys(dados).filter((k) => String(dados[k]) !== String(q[k] == null ? '' : q[k]));
+      if (!mud.length && !f.obs) { view.modal = null; render(); return; }
+      act('Cheque ' + (f.numero ? 'nº ' + f.numero + ' ' : '') + 'atualizado.', () => { Object.assign(q, dados); if (mud.length) logQ(q, 'Alterado: ' + mud.map((k) => ({ data: 'data', numero: 'nº', desc: 'descrição', cat: 'categoria', sub: 'subcategoria', valor: 'valor', aPagar: 'a pagar', grupo: 'grupo' }[k])).join(', ')); if (f.obs) logQ(q, 'Obs: ' + f.obs); });
+    }
+    view.modal = null; render();
+  }
+  function openCheque(q){ view.modal = 'chqedit'; view.qid = q.id; view.cqDel = false; view.qf = { data: q.data, numero: q.numero || '', desc: q.desc, cat: q.cat || '', sub: q.sub || '', valor: num(q.valor), aPagar: num(q.aPagar || 0), grupo: q.grupo || '', obs: '' }; if (cal) closeCal(); render(); }
+  document.addEventListener('change', (e) => {
+    if (!/^chq(new|edit)$/.test(view.modal || '')) return;
+    if (e.target.id === 'cqCat') { const keep = lerQF(); view.qf = Object.assign(keep, { cat: e.target.value, sub: (LISTAS[e.target.value] || [])[0] || '' }); render(); }
+  });
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    const env = t.closest('[data-chqenv]'); if (env) { const q = qById(env.dataset.chqenv); if (q) { if (view.modal) { view.modal = null; render(); const b = document.querySelector('#app [data-chqenv="' + q.id + '"]'); enviarCheque(q, b || env); } else enviarCheque(q, env); } return; }
+    if (t.id === 'cqNew') { view.modal = 'chqnew'; view.cqDel = false; view.qf = { data: HOJE, numero: '', desc: '', cat: '', sub: '', valor: '', aPagar: '', grupo: 'Cheques de ' + mesNome(CUR), obs: '' }; render(); const f = document.getElementById('cqNum'); if (f) f.focus(); return; }
+    if (t.id === 'cqSave') { salvarCheque(); return; }
+    if (t.id === 'cqDel') { view.cqDel = true; render(); return; }
+    if (t.id === 'cqDelNo') { view.cqDel = false; render(); return; }
+    if (t.id === 'cqDelOk') { const q = qById(view.qid); if (q) { const s = chqSit(q); act('Cheque ' + (q.numero ? 'nº ' + q.numero + ' ' : '') + 'excluído.', () => { if (s.k === 'enviado') S.contas = S.contas.filter((c) => c.id !== s.c.id); S.cheques = S.cheques.filter((x) => x.id !== q.id); }); view.modal = null; render(); } return; }
+    if (t.closest('button, a, input, select, textarea, label')) return;
+    const row = t.closest('#app tr[data-qid]'); if (row) { const q = qById(row.dataset.qid); if (q) openCheque(q); }
+  });
+
   function render(){
     const y0 = window.scrollY;
     let el0 = anchorSel ? document.querySelector(anchorSel) : null;
@@ -268,7 +683,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     try { renderCore(); }
     catch (err) {
       console.error(err);
-      document.getElementById('app').innerHTML = '<div class="today"><h1>' + esc(({ pagar: 'Contas a pagar', of: 'Oficinas', pr: 'Prorrogadas', rel: 'Relatório', dre: 'DRE', drel: 'DRE lançamentos', cfg: 'Configurações' })[view.tela] || '') + '</h1></div><section class="panel" style="padding:18px;border-color:var(--danger)"><b style="color:var(--danger-ink)">Esta tela não abriu.</b><p style="margin:6px 0;color:var(--muted);font-size:14px">Recarregue a página. Se continuar, mande um print desta mensagem para o Lucca. Detalhe técnico: <code>' + esc(String(err && err.message || err)) + '</code></p><button type="button" class="btn" onclick="location.reload()">Recarregar</button></section>';
+      document.getElementById('app').innerHTML = '<div class="today"><h1>' + esc(({ pagar: 'Contas a pagar', of: 'Oficinas', parc: 'Parcelamentos', pr: 'Prorrogadas', rel: 'Relatório', dre: 'DRE', drel: 'DRE lançamentos', cfg: 'Configurações' })[view.tela] || '') + '</h1></div><section class="panel" style="padding:18px;border-color:var(--danger)"><b style="color:var(--danger-ink)">Esta tela não abriu.</b><p style="margin:6px 0;color:var(--muted);font-size:14px">Recarregue a página. Se continuar, mande um print desta mensagem para o Lucca. Detalhe técnico: <code>' + esc(String(err && err.message || err)) + '</code></p><button type="button" class="btn" onclick="location.reload()">Recarregar</button></section>';
     }
     { const tt = document.getElementById('topTitle'); const td = document.querySelector('#app > .today'); tt.innerHTML = ''; if (td) tt.appendChild(td); }
     document.getElementById('modalHost').innerHTML = modalHTML();
@@ -278,12 +693,13 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   }
   function renderCore(){
     document.querySelectorAll('[data-tela]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tela === view.tela)));
-    document.getElementById('btnNew').textContent = view.tela === 'of' ? '+ Nova entrega' : '+ Nova conta';
+    document.getElementById('btnNew').textContent = view.tela === 'of' ? '+ Nova entrega' : view.tela === 'parc' ? '+ Novo parcelamento' : '+ Nova conta';
     { const gs = document.getElementById('gSearch'); if (gs) gs.placeholder = view.tela === 'of' ? 'Buscar oficina' : 'Buscar fornecedor ou categoria'; }
     { const ub = document.getElementById('userBox'); if (ub) ub.innerHTML = 'Conectado como<span class="ub-name">' + esc(S.user) + '</span><button type="button" class="ub-out" id="btnSair">Sair</button>'; }
     document.getElementById('btnNew').hidden = ['pr','rel','dre','drel','cfg'].includes(view.tela);
     document.getElementById('btnPdf').hidden = view.tela !== 'rel';
     document.getElementById('btnXls').hidden = view.tela !== 'dre' && view.tela !== 'drel';
+    if (view.tela === 'parc') return renderParc();
     if (view.tela === 'of') return renderOf();
     if (view.tela === 'pr') return renderPr();
     if (view.tela === 'rel') return renderRel();
@@ -478,7 +894,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const us = S.usuarios, f = view.logUser || '', q = (view.logQ || '').trim().toUpperCase();
     const L = (S.logs || []).filter((x) => (!f || x.por === f) && (!q || x.txt.toUpperCase().includes(q)));
     const nPg = Math.max(1, Math.ceil(L.length / 15)); const pg = Math.min(view.logPg || 0, nPg - 1); view.logPg = pg;
-    const TELA = { pagar: 'Contas a pagar', of: 'Oficinas', pr: 'Prorrogadas', rel: 'Relatório', dre: 'DRE', drel: 'DRE lançamentos', cfg: 'Configurações', login: 'Login' };
+    const TELA = { pagar: 'Contas a pagar', of: 'Oficinas', parc: 'Parcelamentos', pr: 'Prorrogadas', rel: 'Relatório', dre: 'DRE', drel: 'DRE lançamentos', cfg: 'Configurações', login: 'Login' };
     let h = '<div class="lgrid"><section class="panel lpane"><div class="lhead"><div><h2>Usuários</h2><small>Quem está logado: <b>' + esc(S.user) + '</b>. Cada um entra com a própria senha.</small></div></div><table class="ltab utab"><tbody>' +
       us.map((u) => '<tr><td>' + esc(u) + (u === S.user ? ' <span class="chip c-open" style="margin-left:6px">usando agora</span>' : '') + '</td><td class="r">' + (S.senhas && S.senhas[u] ? (ADMIN ? '<button type="button" class="btn sm" data-resetpw="' + esc(u) + '" title="Apaga a senha e gera um código de convite. A pessoa cria outra senha com esse código.">Redefinir senha</button>' : '') : '<small style="color:var(--muted)">sem senha ainda' + (S.convites[u] ? ' · convite <b class="num">' + esc(S.convites[u]) + '</b>' : '') + '</small>') + '</td></tr>').join('') +
       (ADMIN ? '<tr class="ladd"><td><input id="uNome" placeholder="Novo usuário" autocomplete="off"></td><td class="r"><button type="button" class="btn sm y" id="uAdd">Adicionar</button></td></tr>' : '') + '</tbody></table></section>';
@@ -1073,6 +1489,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (cfd) { const id = cfd.closest('[data-fid]').dataset.fid; const f = S.fornecedores.find((x) => x.id === id); act(f.nome + ' removido da lista.', () => { S.fornecedores = S.fornecedores.filter((x) => x.id !== id); }); return; }
     if (e.target.closest('#btnPdf')) { gerarPdf(); return; }
     if (e.target.closest('#btnXls')) { if (view.tela === 'drel') exportarLancXlsx(); else exportarDreXlsx(); return; }
+    if (e.target.id === 'btnNew' && view.tela === 'parc') { view.modal = 'parcnew'; view.pf = blankPF(); render(); const f = document.getElementById('pcNome'); if (f) f.focus(); return; }
     if (e.target.id === 'btnNew') { view.modal = view.tela === 'of' ? 'of' : 'conta'; render(); const f = document.getElementById(view.modal === 'of' ? 'oForn' : 'nForn'); if (f) f.focus(); return; }
     if (e.target.closest('[data-modal-close]') || e.target.matches('[data-modal-bg]')) { view.modal = null; render(); return; }
     const gp = e.target.closest('[data-gopay]'); if (gp) { const c = byId(gp.dataset.gopay); if (c) goPay(c); return; }

@@ -3,3 +3,27 @@
 body.salvando .userbox::after { content: 'salvando…'; display: block; font-size: 11px; color: var(--muted, #888); margin-top: 2px; }
 /* Modais pequenos (nova conta, nova entrega) mais largos, para categoria e fornecedor caberem sem cortar. */
 .modal{width:min(560px,100%)}
+
+/* parcelamentos */
+.pfil{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.pfil .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+.chipf,.ptb{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;color:var(--ink)}
+.chipf[aria-pressed="true"],.ptb[aria-pressed="true"]{background:var(--navy);border-color:var(--navy);color:#fff}
+.chipf:focus-visible,.ptb:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.pscroll{overflow-x:auto}table.ptab{min-width:880px}table.ptab.pano{min-width:640px}
+table.ptab td{vertical-align:top}table.ptab td.num,table.ptab td.r{white-space:nowrap}table.ptab td small{white-space:normal}table.ptab td small{display:block;color:var(--muted);font-size:12px;margin-top:2px;font-family:var(--sans)}
+table.ptab tr[data-pid]{cursor:pointer}table.ptab tr[data-pid]:hover td{background:var(--blue-soft)}
+table.ptab tr.pgh td{background:var(--bg);font-weight:800;color:var(--navy);letter-spacing:.04em;font-size:13px}
+table.ptab tr.pgh td small{display:inline;font-weight:600;letter-spacing:0}
+table.ptab.pano{min-width:0!important;width:100%!important;table-layout:fixed}table.pano col.pn{width:240px}table.pano col.pt{width:84px}table.pano td,table.pano th{white-space:nowrap;padding:5px 6px;font-size:12.5px}table.pano td:first-child{overflow:hidden;text-overflow:ellipsis}table.pano th{font-size:11px}@media (max-width:900px){table.ptab.pano{min-width:760px!important}}table.pano tr.pst td{font-weight:700;background:var(--bg)}table.pano tr.ptotg td{border-top:2px solid var(--navy)}
+.pbar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;width:120px;margin-top:5px}.pbar i{display:block;height:100%;background:var(--navy)}
+.z{color:var(--muted)}.pempty{color:var(--muted);padding:18px 4px;margin:0}
+.kpi.kd{border-top-color:var(--danger)}
+.ptabs{display:flex;gap:6px;margin:0 0 10px}
+ol.plist{list-style:none;margin:0;padding:0}
+li.pq{display:grid;grid-template-columns:44px 112px 100px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:7px 2px;border-bottom:1px solid var(--line);font-size:13px}
+li.pq .n{color:var(--muted);font-weight:700}li.pq .v{text-align:right}li.pq .d{white-space:nowrap}li.pq .d small{display:block;font-size:11px;color:var(--muted)}li.pq .a{text-align:right;min-width:42px}
+li.pq.old{color:var(--muted)}li.pq.late .d{color:var(--danger-ink);font-weight:700}
+.chip.c-sent{background:var(--blue-soft);color:var(--navy)}
+table.ptab.pchq{min-width:760px}table.pchq tr[data-qid]{cursor:pointer}table.pchq tr[data-qid]:hover td{background:var(--blue-soft)}table.pchq td{vertical-align:middle}table.pchq tr.pst td{font-weight:700;background:var(--bg)}table.pchq tr.ptotg td{border-top:2px solid var(--navy)}
+.modal.xwide{width:min(1160px,100%)}.modal.xwide .egrid{grid-template-columns:minmax(0,1fr) minmax(0,500px)}.modal.xwide .tlscroll{max-height:340px}
+@media (max-width:900px){.modal.xwide .egrid{grid-template-columns:1fr}}

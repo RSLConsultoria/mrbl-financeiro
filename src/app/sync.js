@@ -1,6 +1,6 @@
 // Grava na planilha só o que mudou. Guarda uma "fotografia" do estado depois de cada gravação e,
 // na próxima, compara registro a registro pelo id. As gravações saem em fila, na ordem em que foram feitas.
-export const COLECOES = { contas: 'Contas', saidas: 'Despesas', entradas: 'Entradas', previsoes: 'Previsoes', fornecedores: 'Fornecedores' };
+export const COLECOES = { contas: 'Contas', saidas: 'Despesas', entradas: 'Entradas', previsoes: 'Previsoes', fornecedores: 'Fornecedores', parcelamentos: 'Parcelamentos', cheques: 'Cheques' };
 
 const configDe = (S) => ({ prazoOficinas: S.prazoOf, prevRevisao: JSON.stringify(S.prevReview || {}) });
 
