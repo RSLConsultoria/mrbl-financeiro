@@ -50,6 +50,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   const nomeKey = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
   const isFixo = (nome) => (S.ofFixas || []).includes(nomeKey(nome));
   const isOf = (c) => c.cat === AC && OFSUBS.includes(c.sub) && !isFixo(c.forn);
+  const naPagar = (c) => !(isOf(c) && !c.pago && !c.recebidoEm);
   const payFrom = (d) => { let x = addDays(parse(d), S.prazoOf); const w = x.getDay(); if (w === 6) x = addDays(x, 2); if (w === 0) x = addDays(x, 1); return iso(x); };
   function normalize(){
     if (S.prazoOf == null) S.prazoOf = 15;
@@ -302,6 +303,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   const novoIdP = novoId;
   const C = (data, forn, cat, sub, valor, extra) => Object.assign({ id: novoId('c'), data, orig: null, forn, cat, sub, valor, pago: false, pagoEm: null, hist: [] }, extra || {});
   const addMes = (s, k) => { const [y, m, d] = String(s).split('-').map(Number); const ult = new Date(y, m - 1 + k + 1, 0).getDate(); return iso(new Date(y, m - 1 + k, Math.min(d, ult))); };
+  // mesma competência, no dia escolhido (no mês mais curto, cai no último dia)
+  const noDia = (s, dia) => { const [y, m] = String(s).split('-').map(Number); const ult = new Date(y, m, 0).getDate(); return y + '-' + pad(m) + '-' + pad(Math.min(dia, ult)); };
   const pById = (id) => (S.parcelamentos || []).find((p) => p.id === id);
   const parcForn = (p, n) => p.nome + ' · ' + n + '/' + p.qtd;
   function parcContas(p){ return S.contas.filter((c) => c.parcId === p.id).sort((a, b) => (a.parcN - b.parcN) || a.data.localeCompare(b.data)); }
@@ -330,7 +333,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   function gerarParcelas(p, primeiro, deN){
     let ligadas = 0, criadas = 0; const usadas = new Set();
     for (let n = deN, k = 0; n <= p.qtd; n++, k++) {
-      const data = addMes(primeiro, k);
+      const data = p.diaVenc ? noDia(addMes(primeiro, k), p.diaVenc) : addMes(primeiro, k);
       const ja = acharParcela(p, data, usadas);
       if (ja) { usadas.add(ja.id); ja.parcId = p.id; ja.parcN = n; logC(ja, 'Ligada ao parcelamento ' + p.nome + ' como parcela ' + n + '/' + p.qtd); ligadas++; continue; }
       const c = C(data, parcForn(p, n), p.cat, p.sub, p.valorParcela, { id: novoIdP('c'), hist: [], parcId: p.id, parcN: n });
@@ -341,12 +344,13 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   }
   function logP(p, txt){ (p.log = p.log || []).push({ txt, em: agora(), por: S.user }); }
   function blankPF(){ return { nome: '', emp: 'MRBL', cat: '', sub: '', valor: '', qtd: '', total: '', pagasAntes: '0', primeiro: addMes(HOJE.slice(0, 8) + '10', 1), obs: '' }; }
-  function openParc(p){ view.modal = 'parcedit'; view.pid = p.id; view.pcDel = false; view.pTab = 'parcelas'; view.pf = { nome: p.nome, emp: p.emp || 'MRBL', cat: p.cat || '', sub: p.sub || '', valor: num(p.valorParcela), qtd: String(p.qtd), total: num(p.valorTotal || p.valorParcela * p.qtd), obs: '' }; if (cal) closeCal(); render(); }
+  function openParc(p){ view.modal = 'parcedit'; view.pid = p.id; view.pcDel = false; view.pTab = 'parcelas'; view.pf = { nome: p.nome, emp: p.emp || 'MRBL', cat: p.cat || '', sub: p.sub || '', valor: num(p.valorParcela), qtd: String(p.qtd), total: num(p.valorTotal || p.valorParcela * p.qtd), dia: String(p.diaVenc || (parcInfo(p).prox ? +parcInfo(p).prox.data.slice(8) : '')), obs: '' }; if (cal) closeCal(); render(); }
   // Lê o formulário (novo ou edição). Devolve { erro } ou os valores já convertidos.
   function lerPF(novo){
     const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
     const f = { nome: g('pcNome').trim(), emp: g('pcEmp'), cat: g('pcCat'), sub: g('pcSub'), valor: parseVal(g('pcVal')), qtd: parseInt(g('pcQtd'), 10), total: parseVal(g('pcTot')), obs: g('pcObs').trim() };
     if (novo) { f.pagasAntes = parseInt(g('pcPagas') || '0', 10); f.primeiro = g('pcPrim'); }
+    else { f.dia = parseInt(g('pcDia'), 10) || 0; if (g('pcDia').trim() && !(f.dia >= 1 && f.dia <= 31)) return { erro: 'O dia do vencimento vai de 1 a 31.' }; }
     if (!f.nome) return { erro: 'Dê um nome ao parcelamento.' };
     if (!(f.valor > 0)) return { erro: 'Informe o valor da parcela.' };
     if (!(f.qtd >= 1)) return { erro: 'Informe a quantidade de parcelas.' };
@@ -386,12 +390,18 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (f.valor !== p.valorParcela) mud.push('valor da parcela de ' + money(p.valorParcela) + ' para ' + money(f.valor));
     if (f.qtd !== p.qtd) mud.push('parcelas de ' + p.qtd + ' para ' + f.qtd);
     if (f.total !== p.valorTotal) mud.push('valor total para ' + money(f.total));
+    const diaAtual = p.diaVenc || (info.prox ? +info.prox.data.slice(8) : 0);
+    if (f.dia && f.dia !== diaAtual) mud.push('dia do vencimento para ' + f.dia);
     if (!mud.length && !f.obs) { view.modal = null; render(); return; }
     act(mud.length ? 'Parcelamento ' + f.nome + ' alterado: ' + mud.join(', ') + '.' : 'Observação no parcelamento ' + p.nome + '.', () => {
       const valorMudou = f.valor !== p.valorParcela, qtdAntes = p.qtd;
       Object.assign(p, { nome: f.nome, emp: f.emp, cat: f.cat, sub: f.sub, valorParcela: f.valor, qtd: f.qtd, valorTotal: f.total });
       if (mud.length) logP(p, 'Alterado: ' + mud.join(', '));
       if (f.obs) logP(p, 'Obs: ' + f.obs);
+      if (f.dia && f.dia !== diaAtual) {
+        p.diaVenc = f.dia;
+        parcContas(p).filter((c) => !c.pago).forEach((c) => { const nova = noDia(c.data, f.dia); if (nova === c.data) return; logC(c, 'Vencimento mudou de ' + dmy(c.data) + ' para ' + dmy(nova) + ' (parcelamento ' + p.nome + ' vence todo dia ' + f.dia + ')'); if (c.orig === c.data) c.orig = nova; c.data = nova; });
+      }
       // parcelas em aberto acompanham o parcelamento; as pagas ficam como foram pagas
       parcContas(p).filter((c) => !c.pago).forEach((c) => {
         if (c.parcN > p.qtd) { S.contas = S.contas.filter((x) => x.id !== c.id); return; }
@@ -532,7 +542,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       fld('Quantidade de parcelas', '<input id="pcQtd" class="val" value="' + esc(f.qtd) + '" inputmode="numeric" placeholder="Ex.: 36">') +
       fld('Valor total', '<input id="pcTot" class="val" value="' + esc(f.total) + '" inputmode="decimal" placeholder="parcela × quantidade">') +
       (novo ? fld('Parcelas já pagas', '<input id="pcPagas" class="val" value="' + esc(f.pagasAntes) + '" inputmode="numeric">') +
-        fld('Vencimento da próxima parcela', '<input type="date" id="pcPrim" value="' + esc(f.primeiro) + '">') : '') +
+        fld('Vencimento da próxima parcela', '<input type="date" id="pcPrim" value="' + esc(f.primeiro) + '">') : fld('Dia do vencimento', '<input id="pcDia" class="val" value="' + esc(f.dia || '') + '" inputmode="numeric" placeholder="Ex.: 30" title="Muda a data de todas as parcelas em aberto. Em mês mais curto, cai no último dia.">')) +
       fld('Observação', '<textarea id="pcObs" rows="3" placeholder="Escreva uma observação. Ao salvar, ela entra na linha do tempo com seu nome.">' + esc(f.obs || '') + '</textarea>') +
       '<p class="enote" id="pcResumo">' + resumoPF() + '</p>';
     if (novo) {
@@ -571,7 +581,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   // Mantém view.pf igual ao formulário enquanto a pessoa digita (o render redesenha o modal).
   document.addEventListener('input', (e) => {
     if (!/^(parcnew|parcedit)$/.test(view.modal || '') || !view.pf) return;
-    const map = { pcNome: 'nome', pcVal: 'valor', pcQtd: 'qtd', pcTot: 'total', pcPagas: 'pagasAntes', pcObs: 'obs' };
+    const map = { pcNome: 'nome', pcVal: 'valor', pcQtd: 'qtd', pcTot: 'total', pcPagas: 'pagasAntes', pcObs: 'obs', pcDia: 'dia' };
     if (map[e.target.id]) { view.pf[map[e.target.id]] = e.target.value; const r = document.getElementById('pcResumo'); if (r) r.textContent = resumoPF(); }
   });
   document.addEventListener('change', (e) => {
@@ -824,8 +834,10 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (view.tela === 'drel') return renderDrel();
     if (view.tela === 'cfg') return renderCfg();
     const app = document.getElementById('app');
-    const late = S.contas.filter(isLate).sort((a,b) => a.data.localeCompare(b.data));
-    const hoje = S.contas.filter((c) => c.data === HOJE && !c.pago);
+    // oficina que ainda não chegou fica só na tela Oficinas; entra em Contas a pagar quando chega (ou se já foi paga)
+    const CP = S.contas.filter(naPagar);
+    const late = CP.filter(isLate).sort((a,b) => a.data.localeCompare(b.data));
+    const hoje = CP.filter((c) => c.data === HOJE && !c.pago);
     const prorHoje = hoje.filter(isPror);
     let h = '';
 
@@ -855,11 +867,11 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const mk = monthOfWeek(view.week);
     const [yy, mm] = mk.split('-').map(Number);
     const weeks = weeksOfMonth(mk);
-    const mRows = S.contas.filter((c) => weeks.some((w) => inWeek(c, w)));
+    const mRows = CP.filter((c) => weeks.some((w) => inWeek(c, w)));
     const mPago = sum(mRows.filter((c) => c.pago)), mAberto = sum(mRows.filter((c) => !c.pago));
     const saldoPrev = prevSaldo(mk);
     const data = weeks.map((w) => {
-      const r = S.contas.filter((c) => inWeek(c, w));
+      const r = CP.filter((c) => inWeek(c, w));
       return { w, paid: sum(r.filter((c) => c.pago)), late: sum(r.filter(isLate)), pror: sum(r.filter((c) => !c.pago && !isLate(c) && isPror(c))), open: sum(r.filter((c) => !c.pago && !isLate(c) && !isPror(c))) };
     });
     // a previsão ainda não lançada vai para as semanas que ainda não acabaram, em partes iguais
@@ -875,8 +887,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
         '<div class="stat"><span class="lbl">Pago</span><b class="num">' + money(mPago) + '</b></div>' +
         '<div class="stat"><span class="lbl">A pagar</span><b class="num">' + money(mAberto) + '</b></div>' +
         '<div class="stat"><span class="lbl">Previsão a lançar</span><b class="num">' + money(saldoPrev) + '</b></div>' +
-        (() => { const fr = S.contas.filter((c) => isPror(c) && origOf(c).slice(0,7) === mk && (c.pago ? (c.pagoEm || c.data) : c.data).slice(0,7) > mk); return '<button type="button" class="stat" data-prlink="' + mk + '" style="background:var(--warn-soft);border:0;border-radius:8px;padding:4px 10px;text-align:left;cursor:pointer;color:var(--ink)" title="Venceria neste mês e foi prorrogado para depois"><span class="lbl" style="color:var(--warn-ink)">Prorrogado para frente ›</span><b class="num">' + money(sum(fr)) + '</b></button>'; })() +
-        (() => { const prev = S.contas.filter((c) => (isPror(c) || isLate(c)) && origOf(c).slice(0,7) < mk && (isLate(c) || c.data.slice(0,7) === mk)); const pm = (() => { const d = new Date(yy, mm-2, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); })(); return '<button type="button" class="stat" data-prlink="' + pm + '" style="background:var(--warn-soft);border:0;border-radius:8px;padding:4px 10px;text-align:left;cursor:pointer;color:var(--ink)" title="Ver o que venceu antes e caiu neste mês"><span class="lbl" style="color:var(--warn-ink)">Vindo de meses anteriores ›</span><b class="num">' + money(sum(prev)) + '</b></button>'; })() +
+        (() => { const fr = CP.filter((c) => isPror(c) && origOf(c).slice(0,7) === mk && (c.pago ? (c.pagoEm || c.data) : c.data).slice(0,7) > mk); return '<button type="button" class="stat" data-prlink="' + mk + '" style="background:var(--warn-soft);border:0;border-radius:8px;padding:4px 10px;text-align:left;cursor:pointer;color:var(--ink)" title="Venceria neste mês e foi prorrogado para depois"><span class="lbl" style="color:var(--warn-ink)">Prorrogado para frente ›</span><b class="num">' + money(sum(fr)) + '</b></button>'; })() +
+        (() => { const prev = CP.filter((c) => (isPror(c) || isLate(c)) && origOf(c).slice(0,7) < mk && (isLate(c) || c.data.slice(0,7) === mk)); const pm = (() => { const d = new Date(yy, mm-2, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); })(); return '<button type="button" class="stat" data-prlink="' + pm + '" style="background:var(--warn-soft);border:0;border-radius:8px;padding:4px 10px;text-align:left;cursor:pointer;color:var(--ink)" title="Ver o que venceu antes e caiu neste mês"><span class="lbl" style="color:var(--warn-ink)">Vindo de meses anteriores ›</span><b class="num">' + money(sum(prev)) + '</b></button>'; })() +
       '</div></div>';
     h += '<div class="chart" role="group" aria-label="Valores por semana">';
     data.forEach((d) => {
@@ -895,7 +907,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     // layout: mês em cima (largura total); vencidas à esquerda e semana à direita; previsões embaixo (scroll único)
     h += '<div class="cols"><aside class="vcol">' + vencH + '</aside><div class="wcol">';
     // semana
-    const rows = S.contas.filter((c) => inWeek(c, view.week)).sort((a,b) => a.data.localeCompare(b.data) || a.forn.localeCompare(b.forn));
+    const rows = CP.filter((c) => inWeek(c, view.week)).sort((a,b) => a.data.localeCompare(b.data) || a.forn.localeCompare(b.forn));
     const aberto = rows.filter((c) => !c.pago), pagas = rows.filter((c) => c.pago), npr = aberto.filter(isPror).length;
     h += '<section class="panel" aria-labelledby="wh"><div class="ph"><div class="mnav"><button type="button" class="nav" data-wnav="-1" aria-label="Semana anterior">‹</button><h2 id="wh" style="min-width:210px;text-align:center">Semana ' + weekLabel(view.week) + '</h2><button type="button" class="nav" data-wnav="1" aria-label="Próxima semana">›</button>' +
       (view.week !== iso(monday(TODAY)) ? '<button type="button" class="btn sm" data-wnav="0">Voltar para esta semana</button>' : '') + '</div>' +
@@ -945,7 +957,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     h += '</div></div>';
     // previsões do mês
     const pv = prevsOf(mk);
-    const inMonth = S.contas.filter((c) => c.data.slice(0,7) === mk);
+    const inMonth = CP.filter((c) => c.data.slice(0,7) === mk);
     let totP = 0, totL = 0;
     h += '<section class="panel" aria-labelledby="pt"><div class="ph"><h2 id="pt">Previsões de ' + MESES[mm-1] + '</h2><span style="color:var(--muted);font-size:14px">Quanto já foi lançado de cada previsão do mês. <button type="button" class="lnk" data-gocfg="prev">Configurar previsões ›</button></span></div>' + (reviewPending() ? '<div class="rvnote">' + cap(mesNome(closedMk)) + ' fechou: há uma sugestão de previsões pela média para os próximos meses. <button type="button" class="btn sm y" data-gocfg="prev">Revisar</button></div>' : '') + '<div class="prev">';
     if (!pv.length) h += '<div class="pv"><span style="color:var(--muted)">Nenhuma previsão para ' + MESES[mm-1] + '. Crie em Configurações › Previsões.</span></div>';
@@ -2391,7 +2403,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       try { navigator.clipboard.writeText(txt).then(() => toast(rows.length + ' linhas copiadas. Cole no Excel com Ctrl+V.', false), () => toast('Não foi possível copiar neste navegador.', false)); } catch (err) { toast('Não foi possível copiar neste navegador.', false); }
       return;
     }
-    const rows = S.contas.filter((c) => inWeek(c, view.week)).sort((a,b) => a.data.localeCompare(b.data));
+    const rows = S.contas.filter(naPagar).filter((c) => inWeek(c, view.week)).sort((a,b) => a.data.localeCompare(b.data));
     const head = ['Data','Vencimento original','Fornecedor / descrição','Categoria','Subcategoria','Valor','Situação','Pago em','Histórico de datas'];
     const lines = [head.join('\t')].concat(rows.map((c) => [dmy(c.data), c.orig ? dmy(c.orig) : '', c.forn, c.cat, c.sub, num(c.valor),
       c.pago ? 'Pago' : isLate(c) ? 'Vencida' : isPror(c) ? 'Prorrogada' : 'A pagar', c.pagoEm ? dmy(c.pagoEm) : '', nPror(c) ? histText(c) : ''].join('\t')));
