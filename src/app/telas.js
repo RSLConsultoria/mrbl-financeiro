@@ -101,7 +101,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
 
   const blankD = () => ({ data: HOJE, cat: '', sub: '', emp: 'MRBL', valor: '', forn: '', resp: RESPS[RESPS.length-1] || '', obs: '', contaId: null });
   const blankE = () => ({ data: HOJE, cat: ECATS[0], cli: '', nf: '', valor: '', resp: RESPS[RESPS.length-1] || '', obs: '' });
-  const view = { cfgTab: 'listas', cfgQ: '', pvYear: 0, cfgCat: AC, newSub: '', modal: null, dForm: blankD(), eForm: blankE(), dStatus: '', eStatus: '', drelTab: 'sai', dreProj: false, dreOpen: {}, drelMes: iso(TODAY).slice(0,7), relVis: 'semana', relMes: iso(TODAY).slice(0,7), relVal: 'all', relOpen: {}, prMes: (() => { const d = new Date(TODAY.getFullYear(), TODAY.getMonth()-1, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); })(), tela: 'pagar', ofWeek: iso(monday(TODAY)), receiving: null, week: iso(monday(TODAY)), addErr: '', paying: null, removing: null, proring: null, histOpen: null, newCat: CATS[0], pCat: AC };
+  const view = { cfgTab: 'listas', cfgQ: '', pvYear: 0, cfgCat: AC, newSub: '', modal: null, dForm: blankD(), eForm: blankE(), dStatus: '', eStatus: '', drelTab: 'sai', dreProj: false, dreOpen: {}, dreModo: 'anual', dreMes: '', dreOpenM: {}, dreAllM: true, drelMes: iso(TODAY).slice(0,7), relVis: 'semana', relMes: iso(TODAY).slice(0,7), relVal: 'all', relOpen: {}, prMes: (() => { const d = new Date(TODAY.getFullYear(), TODAY.getMonth()-1, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); })(), tela: 'pagar', ofWeek: iso(monday(TODAY)), receiving: null, week: iso(monday(TODAY)), addErr: '', paying: null, removing: null, proring: null, histOpen: null, newCat: CATS[0], pCat: AC };
   if (converterFixos()) { msgPendente = 'Oficinas com pagamento fixo: contas ajustadas para a data do pagamento.'; save(); }
   let undoSnap = null, toastTimer = null;
   const snap = () => JSON.stringify(S);
@@ -1366,6 +1366,61 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     DRE_MESES.forEach((_, i) => { D.ini[i] = i === 0 ? DRE_HIST.saldoJan : D.fim[i-1]; D.fim[i] = D.ini[i] + D.lucro[i]; });
     return D;
   }
+  function dreMensalHTML(D, sumA){
+    const mk = view.dreMes || (DRE_MESES.includes(HOJE.slice(0,7)) ? HOJE.slice(0,7) : '2026-07');
+    const mi = DRE_MESES.indexOf(mk);
+    const [yy, mm] = mk.split('-').map(Number);
+    const nd = new Date(yy, mm, 0).getDate();
+    const dias = Array.from({length: nd}, (_, i) => mk + '-' + pad(i+1));
+    const z = () => dias.map(() => 0);
+    const di = (d) => (d && d.slice(0,7) === mk) ? +d.slice(8,10) - 1 : -1;
+    const cats = {}, cmv = z(), frete = z(), ent = {}, totD = z(), totE = z();
+    S.saidas.forEach((c) => { const i = di(c.data); if (i < 0) return; totD[i] += c.valor; const g = grp(c);
+      if (g === 'cmv') cmv[i] += c.valor; else if (g === 'frete') frete[i] += c.valor;
+      else { const k = c.cat || 'Sem categoria'; const o = cats[k] = cats[k] || { v: z(), subs: {} }; o.v[i] += c.valor; (o.subs[c.sub || '—'] = o.subs[c.sub || '—'] || z())[i] += c.valor; } });
+    S.entradas.forEach((e) => { const i = di(e.data); if (i < 0) return; (ent[e.cat] = ent[e.cat] || z())[i] += e.valor; if (!EXCL_ENT.includes(e.cat)) totE[i] += e.valor; });
+    const temDia = sumA(totD) + Object.values(ent).reduce((t, a) => t + sumA(a), 0) > 0;
+    const sem = ['dom','seg','ter','qua','qui','sex','sáb'];
+    const cel = (v, st) => '<td class="r num"' + (st ? ' style="' + st + '"' : '') + '>' + (v ? (v < 0 ? '−' : '') + num(Math.abs(v)) : '') + '</td>';
+    const hoje = dias.indexOf(HOJE);
+    const row = (label, arr, cls, lst, tot) => '<tr class="' + cls + '"><td' + (lst ? ' style="' + lst + '"' : '') + '>' + label + '</td>' + arr.map((v, i) => cel(v, (v < 0 ? 'color:var(--danger-ink);' : '') + (i === hoje ? 'background:var(--blue-soft);' : ''))).join('') + (tot === false ? '<td></td>' : cel(sumA(arr), 'font-weight:700' + (sumA(arr) < 0 ? ';color:var(--danger-ink)' : ''))) + '</tr>';
+    const sec = (t) => '<tr class="totrow"><td colspan="' + (nd + 2) + '" style="font-weight:800;letter-spacing:.04em">' + t + '</td></tr>';
+    let h = '<section class="panel"><div class="ph" style="flex-wrap:wrap;gap:8px"><div style="display:flex;align-items:center;gap:8px">' +
+      '<button type="button" class="btn sm" data-dre="mes:-1"' + (mi <= 0 ? ' disabled' : '') + ' aria-label="Mês anterior">‹</button>' +
+      '<h3 style="margin:0;font-size:16px;min-width:150px;text-align:center;text-transform:capitalize">' + mesNome(mk) + ' ' + yy + (mk === HOJE.slice(0,7) ? ' <small style="color:var(--muted);font-weight:400">(parcial)</small>' : '') + '</h3>' +
+      '<button type="button" class="btn sm" data-dre="mes:1"' + (mi >= DRE_MESES.length - 1 ? ' disabled' : '') + ' aria-label="Próximo mês">›</button></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn sm" data-dre="aberto:1">Abrir todas</button><button type="button" class="btn sm" data-dre="aberto:0">Fechar todas</button></div></div>';
+    if (!temDia) {
+      h += '<div class="hint" style="padding:16px"><span>' + (mi < 6 ? 'Janeiro a junho só existem consolidados por mês (aba DRE 2026 da planilha), sem os lançamentos dia a dia. Veja esses meses na visão anual.' : 'Nenhum lançamento da DRE neste mês ainda.') + '</span></div></section>';
+      return h;
+    }
+    const ini = D.ini[mi];
+    const saldo = []; dias.forEach((_, i) => { saldo[i] = (i ? saldo[i-1] : ini) + totE[i] - totD[i]; });
+    const sIni = dias.map((_, i) => i ? saldo[i-1] : ini);
+    h += '<div class="drescroll"><table class="rel dre dmes"><thead><tr><th>' + mesNome(mk) + '</th>' + dias.map((d, i) => { const w = new Date(yy, mm-1, i+1).getDay(); return '<th class="r"' + (i === hoje ? ' style="background:var(--navy);color:#fff"' : (w === 0 || w === 6 ? ' style="color:var(--muted)"' : '')) + '>' + (i+1) + '<br><small style="font-weight:400">' + sem[w] + '</small></th>'; }).join('') + '<th class="r">Total do mês</th></tr></thead><tbody>';
+    h += sec('DESPESAS');
+    const ordem = Object.keys(LISTAS).filter((k) => cats[k]).concat(Object.keys(cats).filter((k) => !(k in LISTAS)));
+    ordem.forEach((k) => {
+      const o = cats[k], key = 'm:' + k, op = view.dreOpenM[key] !== undefined ? view.dreOpenM[key] : view.dreAllM;
+      h += '<tr class="catrow"><td><button type="button" data-dre="togm:' + esc(k) + '" style="background:none;border:0;padding:4px 0;font-weight:700;cursor:pointer;color:var(--ink);text-align:left">' + (op ? '▾ ' : '▸ ') + esc(k) + '</button></td>' + o.v.map((v, i) => cel(v, 'font-weight:700' + (i === hoje ? ';background:var(--blue-soft)' : ''))).join('') + cel(sumA(o.v), 'font-weight:700') + '</tr>';
+      if (op) { const subs = (LISTAS[k] || []).filter((s) => o.subs[s]).concat(Object.keys(o.subs).filter((s) => !(LISTAS[k] || []).includes(s)));
+        subs.forEach((s) => { h += row(esc(s), o.subs[s], 'subrow', 'padding-left:24px;color:var(--muted);font-size:12px'); }); }
+    });
+    h += row('FORNECEDORES (CMV)', cmv, 'catrow', 'font-weight:700');
+    h += row('FRETE', frete, 'catrow', 'font-weight:700');
+    h += row('Total de despesas', totD, 'totrow', 'font-weight:800');
+    h += sec('ENTRADAS');
+    const eo = ECATS.filter((k) => !EXCL_ENT.includes(k)).concat(Object.keys(ent).filter((k) => !ECATS.includes(k) && !EXCL_ENT.includes(k)));
+    eo.forEach((k) => { h += row(esc(k), ent[k] || z(), 'subrow'); });
+    h += row('Total entradas (banco)', totE, 'totrow', 'font-weight:800');
+    EXCL_ENT.forEach((k) => { h += row(esc(k) + ' <small style="color:var(--muted)">(transferência, fora do total)</small>', ent[k] || z(), 'subrow', 'color:var(--muted)'); });
+    h += sec('SALDO');
+    h += row('Resultado do dia', totE.map((v, i) => v - totD[i]), 'subrow');
+    h += row('Saldo inicial banco', sIni, 'subrow', '', false);
+    h += row('Saldo bancário', saldo, 'totrow', 'font-weight:800', false);
+    h += '</tbody></table></div><div class="hint"><span>Mesmo desenho das abas mensais da planilha DRE: despesas por categoria e subcategoria, entradas por tipo e o saldo bancário dia a dia. Saldo inicial do mês = resultado acumulado até o fim do mês anterior (' + (ini < 0 ? '−' : '') + money(Math.abs(ini)) + '). Recebimento MRBL e STOFFA aparecem, mas não somam nas entradas.</span></div></section>';
+    return h;
+  }
   function renderDre(){
     const app = document.getElementById('app');
     const D = dreData();
@@ -1376,7 +1431,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const line = (label, arr, cls, tog, total) => '<tr class="' + (cls || 'catrow') + '"><td>' + (tog ? '<button type="button" data-dre="tog:' + esc(tog) + '" style="background:none;border:0;padding:6px 0;font-weight:700;cursor:pointer;color:var(--ink);text-align:left">' + (view.dreOpen[tog] ? '▾ ' : '▸ ') + label + '</button>' : label) + '</td>' + arr.map((v) => cell(v)).join('') + (total === false ? '<td></td>' : cell(sumA(arr))) + '</tr>';
     let h = '<section class="today"><h1>DRE</h1><span class="sub">Regime de caixa: entradas recebidas e contas pagas, no mês do pagamento. Recebimento MRBL e Recebimento STOFFA ficam de fora.</span></section>';
     h += '<section class="panel"><div class="ph"><div style="color:var(--muted);font-size:14px">Só lançamentos consolidados da DRE. Contas a pagar não entram aqui.</div>' +
-      '<button type="button" class="btn sm" data-tela="drel">Ver lançamentos</button></div>';
+      '<div style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" data-dre="modo:anual" style="' + seg(view.dreModo !== 'mensal') + '">Visão anual</button><button type="button" data-dre="modo:mensal" style="' + seg(view.dreModo === 'mensal') + '">Visão mensal</button><button type="button" class="btn sm" data-tela="drel">Ver lançamentos</button></div></div>';
+    if (view.dreModo === 'mensal') { h += dreMensalHTML(D, sumA); app.innerHTML = h; return; }
     const parcial = (k) => k === HOJE.slice(0,7) ? ' (parcial)' : '';
     const fat = D.recCat['RECEBIMENTO DE CLIENTE'] || DRE_MESES.map(() => 0);
     const fm = Math.max(1, ...fat);
@@ -1615,7 +1671,12 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const gp = e.target.closest('[data-gopay]'); if (gp) { const c = byId(gp.dataset.gopay); if (c) goPay(c); return; }
     const gt = e.target.closest('[data-goto]'); if (gt) { view.tela = 'pagar'; view.week = weekOf(gt.dataset.goto); render(); const t = document.getElementById('wh'); if (t) t.scrollIntoView({block:'start'}); return; }
     const db = e.target.closest('[data-dre]');
-    if (db) { const [k, v] = db.dataset.dre.split(/:(.*)/s); if (k === 'tog') view.dreOpen[v] = !view.dreOpen[v]; render(); return; }
+    if (db) { const [k, v] = db.dataset.dre.split(/:(.*)/s); if (k === 'tog') view.dreOpen[v] = !view.dreOpen[v];
+      if (k === 'modo') view.dreModo = v;
+      if (k === 'togm') { const kk = 'm:' + v; const cur = view.dreOpenM[kk] !== undefined ? view.dreOpenM[kk] : view.dreAllM; view.dreOpenM[kk] = !cur; }
+      if (k === 'aberto') { view.dreAllM = v === '1'; view.dreOpenM = {}; }
+      if (k === 'mes') { const base = view.dreMes || (DRE_MESES.includes(HOJE.slice(0,7)) ? HOJE.slice(0,7) : '2026-07'); const j = DRE_MESES.indexOf(base) + parseInt(v,10); if (j >= 0 && j < DRE_MESES.length) view.dreMes = DRE_MESES[j]; }
+      render(); return; }
     const dl = e.target.closest('[data-drel]');
     if (dl) { const [k, v] = dl.dataset.drel.split(':'); if (k === 'tab') view.drelTab = v; if (k === 'mes') { const [y,m] = view.drelMes.split('-').map(Number); const d = new Date(y, m-1+parseInt(v,10), 1); view.drelMes = d.getFullYear() + '-' + pad(d.getMonth()+1); } view.removing = null; render(); return; }
     const xb = e.target.closest('button[data-x]');
