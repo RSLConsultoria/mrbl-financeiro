@@ -203,6 +203,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   function modalHTML(){
     if (!view.modal) return '';
     if (view.modal === 'pvimp') return pvImpHTML();
+    if (view.modal === 'lanc') return lancModalHTML();
     if (view.modal === 'parcnew' || view.modal === 'parcedit') return parcModalHTML();
     if (view.modal === 'chqnew' || view.modal === 'chqedit') return chqModalHTML();
     const fld = (lab, ctl) => '<label class="ff"><span>' + lab + '</span>' + ctl + '</label>';
@@ -704,6 +705,92 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (t.id === 'cqDelOk') { const q = qById(view.qid); if (q) { const s = chqSit(q); act('Cheque ' + (q.numero ? 'nº ' + q.numero + ' ' : '') + 'excluído.', () => { if (s.k === 'enviado') S.contas = S.contas.filter((c) => c.id !== s.c.id); S.cheques = S.cheques.filter((x) => x.id !== q.id); }); view.modal = null; render(); } return; }
     if (t.closest('button, a, input, select, textarea, label')) return;
     const row = t.closest('#app tr[data-qid]'); if (row) { const q = qById(row.dataset.qid); if (q) openCheque(q); }
+  });
+
+
+  // ---------- DRE lançamentos: editar e excluir ----------
+  // Clique num lançamento abre o formulário. Salvar registra o que mudou (de → para) na linha do tempo do lançamento
+  // e no log; Excluir pede confirmação. Despesa ligada a uma conta paga: ao excluir, a conta volta para "Pagos em
+  // Contas a pagar" (falta lançar na DRE).
+  const lancById = (k, id) => (k === 'sai' ? S.saidas : S.entradas).find((x) => x.id === id);
+  const LANC_CAMPOS = { sai: [['data', 'data'], ['cat', 'categoria'], ['sub', 'subcategoria'], ['emp', 'empresa'], ['valor', 'valor'], ['forn', 'fornecedor'], ['obs', 'observação']],
+    ent: [['data', 'data'], ['cat', 'categoria'], ['cli', 'cliente'], ['nf', 'NF'], ['valor', 'valor'], ['obs', 'observação']] };
+  function openLanc(k, id){ const x = lancById(k, id); if (!x) return; view.modal = 'lanc'; view.lk = k; view.lid = id; view.lDel = false; view.lf = Object.assign({}, x, { valor: num(x.valor) }); if (cal) closeCal(); render(); }
+  function lancModalHTML(){
+    const k = view.lk, x = lancById(k, view.lid); if (!x) { view.modal = null; return ''; }
+    const f = view.lf, fld = (lab, ctl) => '<label class="ff"><span>' + lab + '</span>' + ctl + '</label>';
+    const opt = (arr, v) => arr.map((o) => '<option' + (o === v ? ' selected' : '') + '>' + esc(o) + '</option>').join('');
+    const campos = k === 'sai'
+      ? fld('Data', '<input type="date" id="lData" value="' + esc(f.data) + '">') +
+        fld('Categoria', '<select id="lCat">' + catOpts(f.cat) + '</select>') +
+        fld('Subcategoria', '<select id="lSub">' + subOpts(f.cat, f.sub) + '</select>') +
+        fld('Empresa', '<select id="lEmp">' + opt(['MRBL/STOFFA', 'MRBL', 'STOFFA'], f.emp || 'MRBL') + '</select>') +
+        fld('Valor', '<input id="lVal" class="val" value="' + esc(f.valor) + '" inputmode="decimal">') +
+        fld('Fornecedor / descrição', '<input id="lForn" value="' + esc(f.forn || '') + '" autocomplete="off">') +
+        fld('Observação', '<textarea id="lObs" rows="3">' + esc(f.obs || '') + '</textarea>')
+      : fld('Data', '<input type="date" id="lData" value="' + esc(f.data) + '">') +
+        fld('Categoria', '<select id="lCat">' + opt(ECATS, f.cat) + '</select>') +
+        fld('Cliente', '<input id="lCli" data-cbx="cliList2" value="' + esc(f.cli || '') + '" autocomplete="off"><datalist id="cliList2">' + CLIENTES.map((c) => '<option value="' + esc(c) + '">').join('') + '</datalist>') +
+        fld('NF', '<input id="lNf" value="' + esc(f.nf || '') + '">') +
+        fld('Valor', '<input id="lVal" class="val" value="' + esc(f.valor) + '" inputmode="decimal">') +
+        fld('Observação', '<textarea id="lObs" rows="3">' + esc(f.obs || '') + '</textarea>');
+    const c = k === 'sai' && x.contaId ? byId(x.contaId) : null;
+    const nota = c ? '<p class="enote">Ligada à conta <b>' + esc(c.forn) + '</b> (' + money(c.valor) + (c.pago ? ', paga ' + dm(c.pagoEm || c.data) : '') + '). Editar aqui não muda a conta. <button type="button" class="lnk" data-gopay="' + c.id + '">Ver em Contas a pagar ›</button></p>' : '';
+    const log = (x.log || []).slice().reverse();
+    const tl = '<ol class="tl">' + (log.length ? log.map((l, i) => '<li class="e' + (i === log.length - 1 ? ' last' : '') + '"><b>' + esc(l.txt) + '</b><small>' + quando(l.em) + (l.por ? ' por <span class="who">' + esc(l.por) + '</span>' : '') + '</small></li>').join('') : '<li class="o last"><b>Lançado' + (x.resp ? ' por ' + esc(x.resp) : '') + '</b><small>' + (x.criadoEm ? quando(x.criadoEm) : 'sem alterações desde então') + '</small></li>') + '</ol>';
+    const xBtn = '<button type="button" class="mx" data-modal-close aria-label="Fechar"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+    return '<div class="modal-bg" data-modal-bg><div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mt"><div class="mh"><h2 id="mt">' + (k === 'sai' ? 'Despesa' : 'Entrada') + ' · ' + esc(k === 'sai' ? (x.forn || x.sub || x.cat) : (x.cli || x.cat)) + ' · ' + money(x.valor) + '</h2>' + xBtn + '</div>' +
+      '<div class="ebody"><div class="egrid"><div class="fbody">' + campos + nota + '</div><div class="tlbox"><h3>Linha do tempo</h3><div class="tlscroll">' + tl + '</div></div></div></div>' +
+      '<div class="efoot"><span id="modalErr" class="err" role="alert"></span><div class="fact">' +
+      (view.lDel ? '<span style="font-size:13px;color:var(--danger-ink)">Deseja mesmo excluir este lançamento de ' + money(x.valor) + '? Ele sai da DRE.' + (c ? ' A conta volta para "Pagos em Contas a pagar".' : '') + '</span><button type="button" class="btn del" id="lDelOk">Sim, excluir</button><button type="button" class="btn" id="lDelNo">Não</button>'
+        : '<button type="button" class="btn del ghost" id="lDel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>Excluir</button>') +
+      '<span class="grow"></span><button type="button" class="btn y" id="lSave">Salvar</button></div></div></div></div>';
+  }
+  const LMAP = { lData: 'data', lCat: 'cat', lSub: 'sub', lEmp: 'emp', lVal: 'valor', lForn: 'forn', lCli: 'cli', lNf: 'nf', lObs: 'obs' };
+  document.addEventListener('input', (e) => { if (view.modal === 'lanc' && LMAP[e.target.id]) view.lf[LMAP[e.target.id]] = e.target.value; });
+  document.addEventListener('change', (e) => {
+    if (view.modal !== 'lanc' || !LMAP[e.target.id]) return;
+    view.lf[LMAP[e.target.id]] = e.target.value;
+    if (e.target.id === 'lCat' && view.lk === 'sai') { view.lf.sub = (LISTAS[e.target.value] || [''])[0] || ''; render(); }
+  });
+  function salvarLanc(){
+    const k = view.lk, x = lancById(k, view.lid), f = view.lf, err = document.getElementById('modalErr'); if (!x) return;
+    const v = parseVal(f.valor);
+    if (!f.data) { err.textContent = 'Escolha a data.'; return; }
+    if (isNaN(v) || v <= 0) { err.textContent = 'Valor inválido. Use o formato 1.234,56.'; return; }
+    const novo = Object.assign({}, f, { valor: v, forn: (f.forn || '').trim(), cli: (f.cli || '').trim(), nf: (f.nf || '').trim(), obs: (f.obs || '').trim() });
+    const fmt = (c, val) => c === 'valor' ? money(+val || 0) : c === 'data' ? dmy(val) : (val || '—');
+    const mud = LANC_CAMPOS[k].filter(([c]) => String(x[c] == null ? '' : x[c]) !== String(novo[c] == null ? '' : novo[c])).map(([c, nome]) => [c, nome + ': ' + fmt(c, x[c]) + ' → ' + fmt(c, novo[c])]);
+    if (!mud.length) { view.modal = null; render(); return; }
+    const quem = k === 'sai' ? (x.forn || x.sub || x.cat) : (x.cli || x.cat);
+    act((k === 'sai' ? 'Despesa' : 'Entrada') + ' ' + quem + ' de ' + dm(x.data) + ' alterada: ' + mud.map((m) => m[1]).join('; ') + '.', () => {
+      mud.forEach(([c]) => { x[c] = novo[c]; });
+      (x.log = x.log || []).push({ txt: 'Alterado: ' + mud.map((m) => m[1]).join('; '), em: agora(), por: S.user });
+    });
+    view.modal = null; render();
+  }
+  function excluirLanc(){
+    const k = view.lk, x = lancById(k, view.lid); if (!x) return;
+    const quem = k === 'sai' ? (x.forn || x.sub || x.cat) : (x.cli || x.cat);
+    act((k === 'sai' ? 'Despesa' : 'Entrada') + ' excluída: ' + quem + ' de ' + dmy(x.data) + ', ' + money(x.valor) + ' (' + x.cat + (x.sub ? ' · ' + x.sub : '') + ').', () => {
+      if (k === 'sai') {
+        S.contas.forEach((c) => { if (c.dreId === x.id || c.id === x.contaId) { c.dreId = null; c.dreSkip = false; logC(c, 'Lançamento na DRE excluído (' + money(x.valor) + '); conta volta para "falta lançar na DRE"'); } });
+        S.saidas = S.saidas.filter((s) => s.id !== x.id);
+      } else S.entradas = S.entradas.filter((s) => s.id !== x.id);
+    });
+    view.modal = null; render();
+  }
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (view.modal === 'lanc') {
+      if (t.id === 'lSave') { salvarLanc(); return; }
+      if (t.closest('#lDel')) { view.lDel = true; render(); return; }
+      if (t.id === 'lDelNo') { view.lDel = false; render(); return; }
+      if (t.id === 'lDelOk') { excluirLanc(); return; }
+      return;
+    }
+    if (t.closest('button, a, input, select, textarea, label')) return;
+    const row = t.closest('#app tr[data-lanc]'); if (row) { const [k, id] = row.dataset.lanc.split(':'); openLanc(k, id); }
   });
 
   function render(){
@@ -1372,13 +1459,13 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (view.drelTab === 'sai') {
       h += '<div class="dhist"><table><thead><tr><th style="width:56px">Data</th><th style="width:22%">Fornecedor / descrição</th><th style="width:30%">Categoria · subcategoria</th><th style="width:80px">Empresa</th><th class="r" style="width:104px">Valor</th><th style="width:66px">Resp.</th><th>Observação</th></tr></thead><tbody>';
       if (!sai.length) h += '<tr><td colspan="7" class="empty">Nenhuma despesa lançada neste mês.</td></tr>';
-      sai.forEach((x) => { h += '<tr><td class="num">' + dm(x.data) + '</td><td>' + esc(x.forn || '—') + (x.contaId ? sm('ligada a Contas a pagar') : '') + '</td><td>' + esc(x.cat || '—') + (x.sub ? sm(x.sub) : '') + '</td><td>' + esc(x.emp || '') + '</td><td class="r num">' + num(x.valor) + '</td><td>' + esc(x.resp || '—') + '</td><td style="color:var(--muted)">' + esc(x.obs || '') + '</td></tr>'; });
+      sai.forEach((x) => { h += '<tr class="clk" data-lanc="sai:' + x.id + '" title="Clique para editar ou excluir"><td class="num">' + dm(x.data) + '</td><td>' + esc(x.forn || '—') + (x.contaId ? sm('ligada a Contas a pagar') : '') + '</td><td>' + esc(x.cat || '—') + (x.sub ? sm(x.sub) : '') + '</td><td>' + esc(x.emp || '') + '</td><td class="r num">' + num(x.valor) + '</td><td>' + esc(x.resp || '—') + '</td><td style="color:var(--muted)">' + esc(x.obs || '') + '</td></tr>'; });
     } else {
       h += '<div class="dhist"><table><thead><tr><th style="width:56px">Data</th><th style="width:24%">Categoria</th><th style="width:22%">Cliente</th><th style="width:14%">NF</th><th class="r" style="width:110px">Valor</th><th style="width:66px">Resp.</th><th>Observação</th></tr></thead><tbody>';
       if (!ent.length) h += '<tr><td colspan="7" class="empty">Nenhuma entrada lançada neste mês.</td></tr>';
-      ent.forEach((x) => { const fora = EXCL_ENT.includes(x.cat); h += '<tr' + (fora ? ' style="opacity:.75"' : '') + '><td class="num">' + dm(x.data) + '</td><td>' + esc(x.cat) + (fora ? sm('não entra na DRE') : '') + '</td><td>' + esc(x.cli || '—') + '</td><td>' + esc(x.nf || '') + '</td><td class="r num">' + num(x.valor) + '</td><td>' + esc(x.resp || '—') + '</td><td style="color:var(--muted)">' + esc(x.obs || '') + '</td></tr>'; });
+      ent.forEach((x) => { const fora = EXCL_ENT.includes(x.cat); h += '<tr class="clk" data-lanc="ent:' + x.id + '" title="Clique para editar ou excluir"' + (fora ? ' style="opacity:.75"' : '') + '><td class="num">' + dm(x.data) + '</td><td>' + esc(x.cat) + (fora ? sm('não entra na DRE') : '') + '</td><td>' + esc(x.cli || '—') + '</td><td>' + esc(x.nf || '') + '</td><td class="r num">' + num(x.valor) + '</td><td>' + esc(x.resp || '—') + '</td><td style="color:var(--muted)">' + esc(x.obs || '') + '</td></tr>'; });
     }
-    h += '</tbody></table></div><div class="hint"><span>Histórico do que foi lançado, só para consulta. Nada entra na DRE sozinho: todo lançamento é conferido e registrado por quem está logado.</span></div></section>';
+    h += '</tbody></table></div><div class="hint"><span>Clique num lançamento para editar ou excluir. Toda mudança fica na linha do tempo do lançamento e no log, com o nome de quem fez.</span></div></section>';
     h += '</div></div>';
     h += '<div class="foot"><span id="copyOut"></span></div>';
     app.innerHTML = h;
