@@ -154,7 +154,17 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   const sum = (arr) => arr.reduce((a, c) => a + c.valor, 0);
   const matchPrev = (p, c) => c.cat === p.cat && (!p.subs.length || p.subs.includes(c.sub));
   const prevsOf = (mk) => S.previsoes.filter((p) => p.mes === mk);
-  const prevSaldo = (mk) => prevsOf(mk).reduce((a, p) => { const l = sum(S.contas.filter(naPagar).filter((c) => c.data.slice(0,7) === mk && matchPrev(p, c))); return a + Math.max(0, p.valor - l); }, 0);
+  // Lançamentos feitos direto na DRE, sem conta em Contas a pagar (ex.: taxa de antecipação e empréstimo Seda, descontados
+  // quando o dinheiro entra). Contam como pagos no mês e descontam das previsões. Ficam de fora os que o sistema sugere
+  // ligar a uma conta (senão contariam duas vezes) e o que é de antes do sistema.
+  const DRE_AVULSA_DESDE = '2026-11-01';
+  function dreAvulsas(){
+    const sug = new Set(matchSug().map((x) => x.s.id));
+    return S.saidas.filter((x) => !x.contaId && x.data >= DRE_AVULSA_DESDE && !sug.has(x.id))
+      .map((x) => Object.assign({}, x, { avulsa: true, pago: true, pagoEm: x.data, hist: [], forn: (x.forn || x.obs || 'Lançado direto na DRE') + ' · direto na DRE' }));
+  }
+  const lancPrev = (mk) => S.contas.filter(naPagar).filter((c) => c.data.slice(0,7) === mk).concat(dreAvulsas().filter((x) => x.data.slice(0,7) === mk));
+  const prevSaldo = (mk) => { const L = lancPrev(mk); return prevsOf(mk).reduce((a, p) => a + Math.max(0, p.valor - sum(L.filter((c) => matchPrev(p, c)))), 0); };
   const CUR = HOJE.slice(0,7);
   const mAdd = (mk, n) => { const d = new Date(+mk.slice(0,4), +mk.slice(5,7) - 1 + n, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); };
   const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
@@ -894,11 +904,12 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const [yy, mm] = mk.split('-').map(Number);
     const weeks = weeksOfMonth(mk);
     const mRows = CP.filter((c) => weeks.some((w) => inWeek(c, w)));
-    const mPago = sum(mRows.filter((c) => c.pago)), mAberto = sum(mRows.filter((c) => !c.pago));
+    const AV = dreAvulsas().filter((x) => weeks.some((w) => inWeek(x, w)));
+    const mPago = sum(mRows.filter((c) => c.pago)) + sum(AV), mAberto = sum(mRows.filter((c) => !c.pago));
     const saldoPrev = prevSaldo(mk);
     const data = weeks.map((w) => {
       const r = CP.filter((c) => inWeek(c, w));
-      return { w, paid: sum(r.filter((c) => c.pago)), late: sum(r.filter(isLate)), pror: sum(r.filter((c) => !c.pago && !isLate(c) && isPror(c))), open: sum(r.filter((c) => !c.pago && !isLate(c) && !isPror(c))) };
+      return { w, paid: sum(r.filter((c) => c.pago)) + sum(AV.filter((x) => inWeek(x, w))), late: sum(r.filter(isLate)), pror: sum(r.filter((c) => !c.pago && !isLate(c) && isPror(c))), open: sum(r.filter((c) => !c.pago && !isLate(c) && !isPror(c))) };
     });
     // a previsão ainda não lançada vai para as semanas que ainda não acabaram, em partes iguais
     const futuras = data.filter((d) => iso(addDays(parse(d.w), 6)) >= HOJE);
@@ -1273,7 +1284,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const cols = relCols();
     const filt = (c) => view.relVal === 'all' ? true : view.relVal === 'pago' ? c.pago : !c.pago;
     const rows = {};
-    S.contas.forEach((c) => {
+    S.contas.concat(dreAvulsas()).forEach((c) => {
       if (!filt(c)) return;
       cols.forEach((col, i) => {
         if (!col.test(c)) return;
@@ -1296,15 +1307,16 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     // quanto do lançado corresponde a alguma previsão (para a diferença comparar igual com igual)
     const ps = S.previsoes.filter((p) => meses.includes(p.mes));
     const matched = {};
-    S.contas.filter(naPagar).forEach((c) => { if (!filt(c) || !cols.some((col) => col.test(c))) return; if (ps.some((p) => p.mes === c.data.slice(0,7) && matchPrev(p, c))) matched[c.cat] = (matched[c.cat] || 0) + c.valor; });
+    S.contas.filter(naPagar).concat(dreAvulsas()).forEach((c) => { if (!filt(c) || !cols.some((col) => col.test(c))) return; if (ps.some((p) => p.mes === c.data.slice(0,7) && matchPrev(p, c))) matched[c.cat] = (matched[c.cat] || 0) + c.valor; });
     return { cols, rows, prevCat, prevSub, matched };
   }
   // dados do relatório mensal: pago, a pagar (lançado) e previsão ainda não lançada
   function repMonth(m){
     const o = { m, pago: 0, aberto: 0, prev: 0, cats: {} };
     const add = (cat, sub, k, v) => { if (!v) return; cat = cat || 'Sem categoria'; sub = sub || '—'; const c = o.cats[cat] = o.cats[cat] || { pago: 0, aberto: 0, prev: 0, subs: {} }; c[k] += v; const s2 = c.subs[sub] = c.subs[sub] || { pago: 0, aberto: 0, prev: 0 }; s2[k] += v; o[k] += v; };
-    S.contas.filter(naPagar).forEach((c) => { if (c.pago) { if ((c.pagoEm || c.data).slice(0,7) === m) add(c.cat, c.sub, 'pago', c.valor); } else if (c.data.slice(0,7) === m) add(c.cat, c.sub, 'aberto', c.valor); });
-    if (m >= CUR) prevsOf(m).forEach((p) => { const l = sum(S.contas.filter(naPagar).filter((c) => c.data.slice(0,7) === m && matchPrev(p, c))); add(p.cat, (p.subs.length === 1 ? p.subs[0] : p.nome) + ' · previsão', 'prev', Math.max(0, p.valor - l)); });
+    S.contas.filter(naPagar).concat(dreAvulsas()).forEach((c) => { if (c.pago) { if ((c.pagoEm || c.data).slice(0,7) === m) add(c.cat, c.sub, 'pago', c.valor); } else if (c.data.slice(0,7) === m) add(c.cat, c.sub, 'aberto', c.valor); });
+    const LP = lancPrev(m);
+    if (m >= CUR) prevsOf(m).forEach((p) => { const l = sum(LP.filter((c) => matchPrev(p, c))); add(p.cat, (p.subs.length === 1 ? p.subs[0] : p.nome) + ' · previsão', 'prev', Math.max(0, p.valor - l)); });
     o.tot = o.pago + o.aberto + o.prev; return o;
   }
   // por enquanto o relatório trabalha só com novembro e dezembro; para voltar à janela de 6 meses, deixe REP_FIXO = null
@@ -1857,7 +1869,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     // página 2: previsões
     const prevRows = [];
     const byKey = {};
-    sel.filter((m) => m >= CUR).forEach((m) => prevsOf(m).forEach((p) => { const k = pKey(p); const r = byKey[k] = byKey[k] || { nome: p.nome, cat: p.cat, sub: p.subs.join(', ') || 'todas', m: {} }; const l = sum(S.contas.filter(naPagar).filter((c) => c.data.slice(0,7) === m && matchPrev(p, c))); r.m[m] = { v: p.valor, l, s: Math.max(0, p.valor - l) }; }));
+    sel.filter((m) => m >= CUR).forEach((m) => prevsOf(m).forEach((p) => { const k = pKey(p); const r = byKey[k] = byKey[k] || { nome: p.nome, cat: p.cat, sub: p.subs.join(', ') || 'todas', m: {} }; const l = sum(lancPrev(m).filter((c) => matchPrev(p, c))); r.m[m] = { v: p.valor, l, s: Math.max(0, p.valor - l) }; }));
     const pm = sel.filter((m) => m >= CUR);
     let p2 = '<h1 class="h1s">Previsões pela média histórica</h1><p class="sub">Para custos que ainda não têm conta lançada (oficinas, férias, rescisões, manutenção, taxas…) usamos uma estimativa por mês. Ela vem da média dos últimos ' + hm + ' meses fechados na DRE e pode ser ajustada em Configurações › Previsões. Conforme as contas da mesma categoria e subcategoria são lançadas, elas descontam da previsão: no total do relatório entra só o que <b>ainda falta lançar</b>, para não contar duas vezes.</p>';
     if (pm.length && Object.keys(byKey).length) {
@@ -1885,7 +1897,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     };
     sel.forEach((m) => {
       listPages('A pagar · ' + ml(m) + ' ' + m.slice(0,4), S.contas.filter(naPagar).filter((c) => !c.pago && c.data.slice(0,7) === m), (c) => c.data);
-      listPages('Pago · ' + ml(m) + ' ' + m.slice(0,4), S.contas.filter(naPagar).filter((c) => c.pago && (c.pagoEm || c.data).slice(0,7) === m), (c) => c.pagoEm || c.data);
+      listPages('Pago · ' + ml(m) + ' ' + m.slice(0,4), S.contas.filter(naPagar).concat(dreAvulsas()).filter((c) => c.pago && (c.pagoEm || c.data).slice(0,7) === m), (c) => c.pagoEm || c.data);
     });
     return { pages, periodo, file: 'MRBL_Previsao_Saidas_' + sel[0] + (sel.length > 1 ? '_a_' + sel[sel.length-1] : '') + '.pdf' };
   }
