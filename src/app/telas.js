@@ -152,7 +152,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   const weeksOfMonth = (mk) => { const [y,m] = mk.split('-').map(Number); let w = monday(new Date(y, m-1, 1)); const out = []; for (let i = 0; i < 7; i++) { const wi = iso(w); if (monthOfWeek(wi) === mk) out.push(wi); w = addDays(w, 7); } return out; };
   const inWeek = (c, w) => c.data >= w && c.data < iso(addDays(parse(w), 7));
   const sum = (arr) => arr.reduce((a, c) => a + c.valor, 0);
-  const matchPrev = (p, c) => c.cat === p.cat && (!p.subs.length || p.subs.includes(c.sub));
+  // conta pode apontar a previsão que desconta (prevNome), sem mudar a categoria em que foi lançada
+  const matchPrev = (p, c) => c.prevNome ? c.prevNome === p.nome : c.cat === p.cat && (!p.subs.length || p.subs.includes(c.sub));
   const prevsOf = (mk) => S.previsoes.filter((p) => p.mes === mk);
   // Lançamentos feitos direto na DRE, sem conta em Contas a pagar (ex.: taxa de antecipação e empréstimo Seda, descontados
   // quando o dinheiro entra). Contam como pagos no mês e descontam das previsões. Ficam de fora os que o sistema sugere
@@ -277,6 +278,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
         fld('Subcategoria', '<select id="kSub">' + subOpts(ed.cat, ed.sub) + '</select>') +
         fld('Fornecedor', '<input id="kForn" data-cbx="kFornList" data-novo="1" value="' + esc(ed.forn) + '" autocomplete="off"><datalist id="kFornList">' + fornOpts(ed.cat, ed.sub) + '</datalist>') +
         fld('Valor', '<input id="kVal" class="val" value="' + num(ed.valor) + '" inputmode="decimal">') +
+        (() => { const mk = (c.pago ? (c.pagoEm || c.data) : ed.data).slice(0, 7), nomes = [...new Set(S.previsoes.filter((p) => p.mes === mk).map((p) => p.nome))]; if (ed.prev && !nomes.includes(ed.prev)) nomes.push(ed.prev); if (!nomes.length) return '';
+          return fld('Desconta da previsão', '<select id="kPrev" title="Por padrão desconta da previsão da mesma categoria e subcategoria. Escolha outra para descontar dela sem mudar a categoria."><option value="">Automático (pela categoria)</option>' + nomes.map((n) => '<option' + (n === ed.prev ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select>'); })() +
         (c.parcId && pById(c.parcId) ? '<p class="enote">Parcela ' + c.parcN + '/' + pById(c.parcId).qtd + ' do parcelamento <b>' + esc(pById(c.parcId).nome) + '</b>. <button type="button" class="lnk" data-goparc="' + c.parcId + '">Ver em Parcelamentos ›</button></p>' : '') +
         fld('Observação', '<textarea id="kObs" rows="3" placeholder="Escreva uma observação. Ao salvar, ela entra na linha do tempo com seu nome.">' + esc(ed.obs || '') + '</textarea>') +
         (ed.data !== c.data && !c.pago ? '<p class="enote">A data muda de ' + dmy(c.data) + ' para ' + dmy(ed.data) + (ed.data > c.data ? ' e entra no histórico como prorrogação.' : '.') + '</p>' : '') +
@@ -2256,6 +2259,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (t.id === 'kData') { readEdit(); view.ed.data = t.value; render(); return; }
     if (t.id === 'kCat') { readEdit(); view.ed.cat = t.value; view.ed.sub = (LISTAS[t.value] || [''])[0]; render(); return; }
     if (t.id === 'kSub') { readEdit(); view.ed.sub = t.value; render(); return; }
+    if (t.id === 'kPrev') { readEdit(); view.ed.prev = t.value; return; }
     if (t.id === 'kForn' || t.id === 'kVal') { readEdit(); return; }
     if (t.id === 'oeEnt') { readOf(); view.oed.entrega = t.value; render(); return; }
     if (t.id === 'oeRec') { readOf(); view.oed.rec = t.value; render(); return; }
@@ -2363,7 +2367,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (tr) { const y = tr.getBoundingClientRect().top + window.scrollY - window.innerHeight / 3; window.scrollTo({ top: Math.max(0, y) }); tr.classList.add('flash'); setTimeout(() => tr.classList.remove('flash'), 2600); }
   }
   function openEdit(c){ if (view.tela === 'of' && isOf(c)) { view.modal = 'ofedit'; view.editId = c.id; view.edDel = false; view.oed = { entrega: c.entrega, rec: c.recebidoEm || '', sub: c.sub, forn: c.forn, valor: c.valor }; if (cal) closeCal(); render(); return; }
-    view.modal = 'edit'; view.editId = c.id; view.edDel = false; view.ed = { data: c.data, cat: c.cat || '', sub: c.sub || '', forn: c.forn, valor: c.valor }; if (cal) closeCal(); render(); }
+    view.modal = 'edit'; view.editId = c.id; view.edDel = false; view.ed = { data: c.data, cat: c.cat || '', sub: c.sub || '', forn: c.forn, valor: c.valor, prev: c.prevNome || '' }; if (cal) closeCal(); render(); }
   function readEdit(){ const g = (id) => document.getElementById(id); if (!g('kForn')) return; view.ed.forn = g('kForn').value; if (g('kObs')) view.ed.obs = g('kObs').value; const v = parseVal(g('kVal').value); if (!isNaN(v)) view.ed.valor = v; }
   function saveEdit(c){
     readEdit(); const ed = view.ed;
@@ -2376,6 +2380,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (c.forn !== ed.forn.trim()) dsc.push('fornecedor alterado');
     if (c.cat !== ed.cat || c.sub !== ed.sub) dsc.push('categoria ' + (ed.sub || ed.cat));
     if (Math.abs(c.valor - ed.valor) > 0.001) dsc.push('valor ' + num(c.valor) + ' → ' + num(ed.valor));
+    if ((ed.prev || '') !== (c.prevNome || '')) dsc.push(ed.prev ? 'desconta da previsão ' + ed.prev : 'desconta da previsão pela categoria');
     act(ed.forn.trim() + ': ' + (dsc.length ? dsc.join(', ') : 'nada mudou') + '.' + novoTxt(ed.forn, ed.cat, ed.sub), () => {
       ensureForn(ed.forn, ed.cat, ed.sub);
       if (!c.pago && ed.data !== c.data) setDate(c, ed.data);
@@ -2384,6 +2389,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       if (c.cat !== ed.cat || c.sub !== ed.sub) mud.push('categoria ' + (c.sub || c.cat || '—') + ' → ' + (ed.sub || ed.cat));
       if (Math.abs(c.valor - ed.valor) > 0.001) mud.push('valor ' + num(c.valor) + ' → ' + num(ed.valor));
       if (mud.length) logC(c, 'Editada: ' + mud.join('; '));
+      if ((ed.prev || '') !== (c.prevNome || '')) { logC(c, ed.prev ? 'Passa a descontar da previsão ' + ed.prev + ' (categoria continua ' + (ed.sub || ed.cat) + ')' : 'Volta a descontar da previsão pela categoria'); if (ed.prev) c.prevNome = ed.prev; else delete c.prevNome; }
       if (obsTxt) logC(c, 'Obs: ' + obsTxt);
       c.forn = ed.forn.trim(); c.cat = ed.cat; c.sub = ed.sub; c.valor = ed.valor; c.estim = false;
       syncOf(c);
