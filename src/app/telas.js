@@ -343,14 +343,31 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     return { ligadas, criadas };
   }
   function logP(p, txt){ (p.log = p.log || []).push({ txt, em: agora(), por: S.user }); }
+  // Parcelamento que só começa quando outro termina (ex.: Simples 7x → 54x, MTE 12x → 48x):
+  // se a primeira parcela em aberto cai antes do fim do anterior, as parcelas em aberto passam
+  // para o mês seguinte ao da última parcela do anterior, no mesmo dia de vencimento.
+  function depoisDeCiclo(p, predId){ let x = predId, n = 0; while (x && n++ < 50) { if (x === p.id) return true; const q = pById(x); x = q && q.depoisDe; } return false; }
+  function encadear(p, vistos){
+    vistos = vistos || new Set(); if (vistos.has(p.id)) return; vistos.add(p.id);
+    const pred = p.depoisDe && pById(p.depoisDe);
+    if (pred) {
+      const fim = parcInfo(pred).fim, cs = parcContas(p), ab = cs.filter((c) => !c.pago).sort((a, b) => (a.parcN - b.parcN) || a.data.localeCompare(b.data));
+      if (fim && ab.length && !cs.some((c) => c.pago) && ab[0].data.slice(0, 7) <= fim.slice(0, 7)) {
+        const dia = p.diaVenc || +ab[0].data.slice(8), base = addMes(fim.slice(0, 8) + '01', 1);
+        ab.forEach((c, k) => { const nova = noDia(addMes(base, k), dia); if (nova === c.data) return; logC(c, 'Vencimento mudou de ' + dmy(c.data) + ' para ' + dmy(nova) + ' (parcelamento ' + p.nome + ' só começa depois de ' + pred.nome + ')'); if (!c.orig || c.orig === c.data) c.orig = nova; c.data = nova; });
+        logP(p, 'Parcelas em aberto passaram a começar em ' + dmy(noDia(base, dia)) + ', depois da última parcela de ' + pred.nome);
+      }
+    }
+    (S.parcelamentos || []).filter((x) => x.depoisDe === p.id).forEach((x) => encadear(x, vistos));
+  }
   function blankPF(){ return { nome: '', emp: 'MRBL', cat: '', sub: '', valor: '', qtd: '', total: '', pagasAntes: '0', primeiro: addMes(HOJE.slice(0, 8) + '10', 1), obs: '' }; }
-  function openParc(p){ view.modal = 'parcedit'; view.pid = p.id; view.pcDel = false; view.pTab = 'parcelas'; view.pf = { nome: p.nome, emp: p.emp || 'MRBL', cat: p.cat || '', sub: p.sub || '', valor: num(p.valorParcela), qtd: String(p.qtd), total: num(p.valorTotal || p.valorParcela * p.qtd), dia: String(p.diaVenc || (parcInfo(p).prox ? +parcInfo(p).prox.data.slice(8) : '')), obs: '' }; if (cal) closeCal(); render(); }
+  function openParc(p){ view.modal = 'parcedit'; view.pid = p.id; view.pcDel = false; view.pTab = 'parcelas'; view.pf = { nome: p.nome, emp: p.emp || 'MRBL', cat: p.cat || '', sub: p.sub || '', valor: num(p.valorParcela), qtd: String(p.qtd), total: num(p.valorTotal || p.valorParcela * p.qtd), dia: String(p.diaVenc || (parcInfo(p).prox ? +parcInfo(p).prox.data.slice(8) : '')), depois: p.depoisDe || '', obs: '' }; if (cal) closeCal(); render(); }
   // Lê o formulário (novo ou edição). Devolve { erro } ou os valores já convertidos.
   function lerPF(novo){
     const g = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
     const f = { nome: g('pcNome').trim(), emp: g('pcEmp'), cat: g('pcCat'), sub: g('pcSub'), valor: parseVal(g('pcVal')), qtd: parseInt(g('pcQtd'), 10), total: parseVal(g('pcTot')), obs: g('pcObs').trim() };
     if (novo) { f.pagasAntes = parseInt(g('pcPagas') || '0', 10); f.primeiro = g('pcPrim'); }
-    else { f.dia = parseInt(g('pcDia'), 10) || 0; if (g('pcDia').trim() && !(f.dia >= 1 && f.dia <= 31)) return { erro: 'O dia do vencimento vai de 1 a 31.' }; }
+    else { f.depois = g('pcDep'); f.dia = parseInt(g('pcDia'), 10) || 0; if (g('pcDia').trim() && !(f.dia >= 1 && f.dia <= 31)) return { erro: 'O dia do vencimento vai de 1 a 31.' }; }
     if (!f.nome) return { erro: 'Dê um nome ao parcelamento.' };
     if (!(f.valor > 0)) return { erro: 'Informe o valor da parcela.' };
     if (!(f.qtd >= 1)) return { erro: 'Informe a quantidade de parcelas.' };
@@ -392,6 +409,10 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     if (f.total !== p.valorTotal) mud.push('valor total para ' + money(f.total));
     const diaAtual = p.diaVenc || (info.prox ? +info.prox.data.slice(8) : 0);
     if (f.dia && f.dia !== diaAtual) mud.push('dia do vencimento para ' + f.dia);
+    if ((f.depois || '') !== (p.depoisDe || '')) {
+      if (f.depois && depoisDeCiclo(p, f.depois)) { if (err) err.textContent = 'Esse parcelamento já depende deste. Escolha outro.'; return; }
+      mud.push(f.depois ? 'só começa depois de ' + (pById(f.depois) || {}).nome : 'não espera mais outro parcelamento');
+    }
     if (!mud.length && !f.obs) { view.modal = null; render(); return; }
     act(mud.length ? 'Parcelamento ' + f.nome + ' alterado: ' + mud.join(', ') + '.' : 'Observação no parcelamento ' + p.nome + '.', () => {
       const valorMudou = f.valor !== p.valorParcela, qtdAntes = p.qtd;
@@ -414,6 +435,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
         const ult = parcContas(p).reduce((a, c) => (c.data > a ? c.data : a), '') || HOJE;
         gerarParcelas(p, addMes(ult, 1), qtdAntes + 1);
       }
+      if (f.depois) p.depoisDe = f.depois; else delete p.depoisDe;
+      encadear(p);
     });
     view.modal = null; render();
   }
@@ -424,6 +447,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       S.contas = S.contas.filter((c) => !abertas.has(c.id));
       S.contas.forEach((c) => { if (c.parcId === p.id) { delete c.parcId; delete c.parcN; } });
       S.parcelamentos = S.parcelamentos.filter((x) => x.id !== p.id);
+      S.parcelamentos.forEach((x) => { if (x.depoisDe === p.id) delete x.depoisDe; });
     });
     view.modal = null; render();
   }
@@ -495,7 +519,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
         g.forEach(({ p, i }) => {
           const pct = Math.min(100, Math.round(i.pagas / p.qtd * 100));
           const prox = i.prox ? '<span class="num">' + dmy(i.prox.data) + '</span>' + (i.prox.data < HOJE ? ' <span class="chip c-late">Vencida</span>' : '') + (i.venc.length > 1 ? '<small> +' + (i.venc.length - 1) + ' vencida' + (i.venc.length > 2 ? 's' : '') + '</small>' : '') + '<small>parcela ' + i.prox.parcN + '/' + p.qtd + (Math.abs(i.prox.valor - p.valorParcela) > 0.009 ? ' · ' + money(i.prox.valor) : '') + '</small>' : '<span class="chip c-paid">✓ Quitado</span>';
-          h += '<tr data-pid="' + p.id + '"><td><b>' + esc(p.nome) + '</b>' + '<small>' + esc(p.cat || 'Sem categoria') + (p.sub ? ' · ' + esc(p.sub) : '') + '</small></td>' +
+          h += '<tr data-pid="' + p.id + '"><td><b>' + esc(p.nome) + '</b>' + '<small>' + esc(p.cat || 'Sem categoria') + (p.sub ? ' · ' + esc(p.sub) : '') + '</small>' + (p.depoisDe && pById(p.depoisDe) ? '<small>começa depois de ' + esc(pById(p.depoisDe).nome) + '</small>' : '') + '</td>' +
             '<td class="r num">' + money(p.valorParcela) + '</td>' +
             '<td><div class="pbar" role="img" aria-label="' + i.pagas + ' de ' + p.qtd + ' parcelas pagas"><i style="width:' + pct + '%"></i></div><small class="num">' + i.pagas + ' de ' + p.qtd + '</small></td>' +
             '<td class="r num"><b>' + money(i.saldo) + '</b><small>de ' + money(p.valorTotal || p.valorParcela * p.qtd) + '</small></td>' +
@@ -542,7 +566,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       fld('Quantidade de parcelas', '<input id="pcQtd" class="val" value="' + esc(f.qtd) + '" inputmode="numeric" placeholder="Ex.: 36">') +
       fld('Valor total', '<input id="pcTot" class="val" value="' + esc(f.total) + '" inputmode="decimal" placeholder="parcela × quantidade">') +
       (novo ? fld('Parcelas já pagas', '<input id="pcPagas" class="val" value="' + esc(f.pagasAntes) + '" inputmode="numeric">') +
-        fld('Vencimento da próxima parcela', '<input type="date" id="pcPrim" value="' + esc(f.primeiro) + '">') : fld('Dia do vencimento', '<input id="pcDia" class="val" value="' + esc(f.dia || '') + '" inputmode="numeric" placeholder="Ex.: 30" title="Muda a data de todas as parcelas em aberto. Em mês mais curto, cai no último dia.">')) +
+        fld('Vencimento da próxima parcela', '<input type="date" id="pcPrim" value="' + esc(f.primeiro) + '">') : fld('Dia do vencimento', '<input id="pcDia" class="val" value="' + esc(f.dia || '') + '" inputmode="numeric" placeholder="Ex.: 30" title="Muda a data de todas as parcelas em aberto. Em mês mais curto, cai no último dia.">') +
+        fld('Só começa depois de', '<select id="pcDep" title="Para parcelamentos do mesmo tributo pagos em sequência: as parcelas em aberto passam para depois da última parcela do escolhido."><option value="">— começa na data das parcelas</option>' + (S.parcelamentos || []).filter((x) => x.id !== view.pid).sort((a, b) => a.nome.localeCompare(b.nome)).map((x) => '<option value="' + x.id + '"' + (x.id === f.depois ? ' selected' : '') + '>' + esc(x.nome) + ' (' + (x.emp || 'MRBL') + ')</option>').join('') + '</select>')) +
       fld('Observação', '<textarea id="pcObs" rows="3" placeholder="Escreva uma observação. Ao salvar, ela entra na linha do tempo com seu nome.">' + esc(f.obs || '') + '</textarea>') +
       '<p class="enote" id="pcResumo">' + resumoPF() + '</p>';
     if (novo) {
@@ -589,6 +614,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     const id = e.target.id;
     if (id === 'pcEmp') view.pf.emp = e.target.value;
     if (id === 'pcSub') view.pf.sub = e.target.value;
+    if (id === 'pcDep') view.pf.depois = e.target.value;
     if (id === 'pcPrim') { view.pf.primeiro = e.target.value; const r = document.getElementById('pcResumo'); if (r) r.textContent = resumoPF(); }
     if (id === 'pcCat') { view.pf.cat = e.target.value; view.pf.sub = (LISTAS[view.pf.cat] || [])[0] || ''; render(); }
   });
