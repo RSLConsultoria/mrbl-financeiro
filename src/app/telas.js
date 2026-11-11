@@ -163,7 +163,10 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     return S.saidas.filter((x) => !x.contaId && x.data >= DRE_AVULSA_DESDE && !sug.has(x.id))
       .map((x) => Object.assign({}, x, { avulsa: true, pago: true, pagoEm: x.data, hist: [], forn: (x.forn || x.obs || 'Lançado direto na DRE') + ' · direto na DRE' }));
   }
-  const lancPrev = (mk) => S.contas.filter(naPagar).filter((c) => c.data.slice(0,7) === mk).concat(dreAvulsas().filter((x) => x.data.slice(0,7) === mk));
+  // O que já está lançado no mês desconta da previsão: contas a pagar do mês (paga conta no mês em que foi paga)
+  // e lançamentos feitos direto na DRE.
+  const mesLanc = (c) => (c.pago ? (c.pagoEm || c.data) : c.data).slice(0,7);
+  const lancPrev = (mk) => S.contas.filter(naPagar).filter((c) => mesLanc(c) === mk).concat(dreAvulsas().filter((x) => x.data.slice(0,7) === mk));
   const prevSaldo = (mk) => { const L = lancPrev(mk); return prevsOf(mk).reduce((a, p) => a + Math.max(0, p.valor - sum(L.filter((c) => matchPrev(p, c)))), 0); };
   const CUR = HOJE.slice(0,7);
   const mAdd = (mk, n) => { const d = new Date(+mk.slice(0,4), +mk.slice(5,7) - 1 + n, 1); return d.getFullYear() + '-' + pad(d.getMonth()+1); };
@@ -994,7 +997,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     h += '</div></div>';
     // previsões do mês
     const pv = prevsOf(mk);
-    const inMonth = CP.filter((c) => c.data.slice(0,7) === mk);
+    const inMonth = lancPrev(mk);
     let totP = 0, totL = 0;
     h += '<section class="panel" aria-labelledby="pt"><div class="ph"><h2 id="pt">Previsões de ' + MESES[mm-1] + '</h2><span style="color:var(--muted);font-size:14px">Quanto já foi lançado de cada previsão do mês. <button type="button" class="lnk" data-gocfg="prev">Configurar previsões ›</button></span></div>' + (reviewPending() ? '<div class="rvnote">' + cap(mesNome(closedMk)) + ' fechou: há uma sugestão de previsões pela média para os próximos meses. <button type="button" class="btn sm y" data-gocfg="prev">Revisar</button></div>' : '') + '<div class="prev">';
     if (!pv.length) h += '<div class="pv"><span style="color:var(--muted)">Nenhuma previsão para ' + MESES[mm-1] + '. Crie em Configurações › Previsões.</span></div>';
@@ -1307,7 +1310,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
     // quanto do lançado corresponde a alguma previsão (para a diferença comparar igual com igual)
     const ps = S.previsoes.filter((p) => meses.includes(p.mes));
     const matched = {};
-    S.contas.filter(naPagar).concat(dreAvulsas()).forEach((c) => { if (!filt(c) || !cols.some((col) => col.test(c))) return; if (ps.some((p) => p.mes === c.data.slice(0,7) && matchPrev(p, c))) matched[c.cat] = (matched[c.cat] || 0) + c.valor; });
+    S.contas.filter(naPagar).concat(dreAvulsas()).forEach((c) => { if (!filt(c) || !cols.some((col) => col.test(c))) return; if (ps.some((p) => p.mes === mesLanc(c) && matchPrev(p, c))) matched[c.cat] = (matched[c.cat] || 0) + c.valor; });
     return { cols, rows, prevCat, prevSub, matched };
   }
   // dados do relatório mensal: pago, a pagar (lançado) e previsão ainda não lançada
