@@ -1982,7 +1982,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       W.map((w) => { const t = w.p + w.ab + w.es; acc += t; return '<tr' + (w.cur ? ' style="background:#FFF7DD"' : '') + '><td>' + dm(w.A) + ' a ' + dm(w.B) + (w.cur ? ' · atual' : '') + '</td><td class="r">' + (w.p ? n(w.p) : '–') + '</td><td class="r">' + (w.ab ? n(w.ab) : '–') + '</td><td class="r">' + (w.es ? n(w.es) : '–') + '</td><td class="r"><b>' + n(t) + '</b></td><td class="r mut">' + n(acc) + '</td></tr>'; }).join('') + '</tbody></table>';
     pages.push({ t: 'Previsões e semanas', h: p2 });
     // ---------- listas por mês: pago e a pagar juntos, por semana (sábado a sexta) e dia ----------
-    const ROWS = 42;
+    const ROWS = 30;
     const satW = (d) => { const x = parse(d); x.setDate(x.getDate() - ((x.getDay() + 1) % 7)); const e = new Date(x); e.setDate(e.getDate() + 6); return [iso(x), iso(e)]; };
     const tag = (c, s) => ' <em class="tg ' + c + '">' + esc(s) + '</em>';
     sel.forEach((m) => {
@@ -2009,7 +2009,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
         else if (isLate(c)) tg += tag('lt', 'vencida');
         if (c.parcId) tg += tag('pa', 'parcela');
         const cc = ant ? (chg[x.k] ? chg[x.k].map((t) => '<em class="tg ' + t.c + '">' + esc(t.s) + '</em>').join(' ') : '<span class="mut">igual</span>') : '';
-        rows.push('<tr><td class="ck">' + (x.st === 'P' ? '✔' : '☐') + '</td><td>' + esc(c.forn) + tg + '</td><td class="mut">' + esc(cap(String(c.cat || '').toLowerCase())) + ' · ' + esc(cap(String(c.sub || '').toLowerCase())) + '</td><td class="r">' + cc + '</td><td class="r">' + n(x.v) + '</td></tr>');
+        rows.push('<tr><td class="ck">' + (x.st === 'P' ? '✔' : '☐') + '</td><td>' + esc(String(c.forn).replace(/ · direto na DRE$/, '')) + tg + '</td><td><span class="sb">' + esc(cap(String(c.sub || '').toLowerCase())) + '</span><span class="cs">' + esc(cap(String(c.cat || '').toLowerCase())) + '</span></td><td class="r">' + cc + '</td><td class="r">' + n(x.v) + '</td></tr>');
       });
       const tot = lines.reduce((a, z) => a + vOf(z), 0), tp = sumOk.filter((x) => x.st === 'P').reduce((a, x) => a + x.v, 0);
       rows.push('<tr class="mt"><td colspan="4">Total de ' + ml(m).toLowerCase() + ' · pago ' + n(tp) + ' + a pagar ' + n(sumOk.filter((x) => x.st === 'A').reduce((a, x) => a + x.v, 0)) + ' + previsão ' + n(tot - sumOk.reduce((a, x) => a + x.v, 0)) + '</td><td class="r">' + n(tot) + '</td></tr>');
@@ -2020,7 +2020,7 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
       }
       const titulo = 'Pagamentos · ' + ml(m) + ' ' + m.slice(0, 4);
       for (let i = 0; i < rows.length; i += ROWS) {
-        pages.push({ t: titulo, h: '<h1 class="h1s">' + titulo + '</h1><p class="sub">✔ pago (data do pagamento) · ☐ a pagar (vencimento) · total ' + money(tot) + ', sendo ' + money(tp) + ' pago' + (ant ? ' · coluna "Desde o último PDF": igual, novo, pago, era …' : '') + (i ? ' · continuação' : '') + '</p><table class="ls lsm"><thead><tr><th style="width:14px"></th><th style="width:auto">Descrição</th><th style="width:190px">Categoria · subcategoria</th><th class="r" style="width:120px">' + (ant ? 'Desde o último PDF' : '') + '</th><th class="r" style="width:84px">Valor (R$)</th></tr></thead><tbody>' + rows.slice(i, i + ROWS).join('') + '</tbody></table>' });
+        pages.push({ t: titulo, h: '<h1 class="h1s">' + titulo + '</h1><p class="sub">✔ pago (data do pagamento) · ☐ a pagar (vencimento) · total ' + money(tot) + ', sendo ' + money(tp) + ' pago' + (ant ? ' · coluna "Desde o último PDF": igual, novo, pago, era …' : '') + (i ? ' · continuação' : '') + '</p><table class="ls lsm"><thead><tr><th style="width:14px"></th><th style="width:auto">Descrição</th><th style="width:170px">Subcategoria · categoria</th><th class="r" style="width:118px">' + (ant ? 'Desde o último PDF' : '') + '</th><th class="r" style="width:84px">Valor (R$)</th></tr></thead><tbody>' + rows.slice(i, i + ROWS).join('') + '</tbody></table>' });
       }
     });
     const foto = relFotoDe(sel, D);
