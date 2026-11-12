@@ -125,7 +125,8 @@ export function iniciarTelas({ dados, api, sync, aoSair }) {
   function logC(c, txt){ (c.log = c.log || []).push({ txt, em: agora(), por: S.user }); }
   const tipoMud = (c, para) => { const o = c.orig || c.data; return para > o ? 'Prorrogada' : para < o ? 'Antecipada' : 'Voltou ao vencimento original'; };
   function pagar(c, d){ const o = origOf(c); c.pago = true; c.pagoEm = d; logC(c, d < o ? 'Paga antecipada em ' + dmy(d) + ' (vencimento original ' + dm(o) + ')' : d > o ? 'Paga depois do vencimento original, em ' + dmy(d) + ' (vencia ' + dm(o) + ')' : 'Paga em ' + dmy(d) + ', no vencimento original'); }
-  function despagar(c){ c.pago = false; c.pagoEm = null; logC(c, 'Pagamento desfeito'); }
+  // desfazer o pagamento também desfaz o "descartar do lançamento na DRE": ao pagar de novo, volta para lançar
+  function despagar(c){ c.pago = false; c.pagoEm = null; logC(c, 'Pagamento desfeito' + (c.dreSkip && !c.dreId ? '; ao pagar de novo volta para lançar na DRE' : '')); if (!c.dreId) c.dreSkip = false; }
   function syncOf(c){
     if (!isOf(c) || c.pago || c.payManual) return;
     c.data = payFrom(c.recebidoEm || c.entrega);
